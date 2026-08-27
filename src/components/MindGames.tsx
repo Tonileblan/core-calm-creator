@@ -37,6 +37,52 @@ export function Marcador({ items }: { items: [string, string][] }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   CUADRO FLOTANTE DE TURNO / ESTADO
+───────────────────────────────────────────────────────────── */
+
+export function CuadroFlotanteTurno({
+  texto,
+  subtexto,
+  variante = "turno",
+}: {
+  texto: string;
+  subtexto?: string;
+  variante?: "turno" | "observa" | "exito" | "error" | "info";
+}) {
+  const estilos = {
+    turno: "bg-primary/20 border-primary/50 text-primary shadow-[0_0_30px_rgba(var(--primary),0.3)] ring-1 ring-primary/40",
+    observa: "bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-[0_0_25px_rgba(251,191,36,0.25)]",
+    exito: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_25px_rgba(52,211,153,0.25)]",
+    error: "bg-destructive/20 border-destructive/40 text-destructive shadow-[0_0_25px_rgba(239,68,68,0.25)]",
+    info: "bg-secondary/80 border-border/80 text-foreground/90",
+  };
+
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full px-4 py-1.5 border backdrop-blur-xl transition-all duration-300 transform animate-in fade-in zoom-in-95 slide-in-from-top-2 select-none shadow-md",
+        estilos[variante],
+      )}
+    >
+      {variante === "turno" && (
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" />
+        </span>
+      )}
+      {variante === "observa" && (
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400" />
+        </span>
+      )}
+      <span className="text-xs sm:text-sm font-semibold tracking-wide">{texto}</span>
+      {subtexto && <span className="text-[0.7rem] opacity-80 font-normal">· {subtexto}</span>}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
    1. SECUENCIA (Simon)
 ───────────────────────────────────────────────────────────── */
 
@@ -117,19 +163,53 @@ export function SecuenciaGame({ registrar }: { registrar: Registrar }) {
         ]}
       />
 
-      <div className="grid grid-cols-2 gap-3.5 my-auto w-full max-w-[280px] sm:max-w-[320px] aspect-square">
-        {CELDAS.map((c, i) => (
-          <button
-            key={i}
-            onClick={() => pulsar(i)}
-            disabled={fase !== "jugar"}
-            className={
-              "aspect-square rounded-3xl border-2 transition-all duration-150 active:scale-95 cursor-pointer " +
-              (activa === i ? `${c.on} scale-95 ring-4 ring-foreground/20` : c.bg) +
-              (fase === "jugar" ? " hover:opacity-90" : " opacity-75 cursor-default")
-            }
-          />
-        ))}
+      <div className="relative my-auto flex flex-col items-center justify-center w-full">
+        {/* Cuadro flotante de aviso de turno y estado */}
+        <div className="h-10 mb-3 flex items-center justify-center">
+          {fase === "ver" && (
+            <CuadroFlotanteTurno
+              variante="observa"
+              texto="👀 Observa la secuencia..."
+              subtexto={`Nivel ${seq.length}`}
+            />
+          )}
+          {fase === "jugar" && (
+            <CuadroFlotanteTurno
+              variante="turno"
+              texto="👉 ¡Te toca a ti!"
+              subtexto={`Paso ${paso + 1} de ${seq.length}`}
+            />
+          )}
+          {fase === "fin" && (
+            <CuadroFlotanteTurno
+              variante="error"
+              texto="❌ Fin de la secuencia"
+              subtexto={`Nivel ${Math.max(0, seq.length - 1)}`}
+            />
+          )}
+          {fase === "idle" && (
+            <CuadroFlotanteTurno
+              variante="info"
+              texto="Memoria de Trabajo"
+              subtexto="Simon Dice"
+            />
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3.5 w-full max-w-[280px] sm:max-w-[320px] aspect-square">
+          {CELDAS.map((c, i) => (
+            <button
+              key={i}
+              onClick={() => pulsar(i)}
+              disabled={fase !== "jugar"}
+              className={
+                "aspect-square rounded-3xl border-2 transition-all duration-150 active:scale-95 cursor-pointer " +
+                (activa === i ? `${c.on} scale-95 ring-4 ring-foreground/20` : c.bg) +
+                (fase === "jugar" ? " hover:opacity-90" : " opacity-75 cursor-default")
+              }
+            />
+          ))}
+        </div>
       </div>
 
       {fase === "fin" ? (
@@ -242,47 +322,60 @@ export function ParejasGame({ registrar }: { registrar: Registrar }) {
         ]}
       />
 
-      {/* Cuadrícula 4x3 de cartas con gráficos SVG nítidos */}
-      <div className="grid grid-cols-4 gap-2.5 my-auto w-full">
-        {cartas.map((c) => {
-          const isFlipped = abiertas.includes(c.id) || hechas.includes(c.id);
-          const isMatched = hechas.includes(c.id);
-          const IconComp = c.item.icon;
+      <div className="relative my-auto flex flex-col items-center justify-center w-full">
+        {/* Cuadro flotante de turno y estado */}
+        <div className="h-10 mb-2 flex items-center justify-center">
+          {completo ? (
+            <CuadroFlotanteTurno
+              variante="exito"
+              texto="🎉 ¡Completado!"
+              subtexto={`${movs} movimientos`}
+            />
+          ) : (
+            <CuadroFlotanteTurno
+              variante="turno"
+              texto="✨ ¡Te toca a ti!"
+              subtexto="Encuentra las parejas"
+            />
+          )}
+        </div>
 
-          return (
-            <button
-              key={c.id}
-              onClick={() => voltear(c.id)}
-              disabled={isMatched}
-              className={cn(
-                "flex aspect-square items-center justify-center rounded-2xl border-2 transition-all duration-300 active:scale-95 shadow-sm",
-                isFlipped
-                  ? cn(
-                      c.item.bgClass,
-                      c.item.borderClass,
-                      "shadow-[0_0_20px_rgba(255,255,255,0.15)]",
-                      isMatched ? "opacity-90 ring-2 ring-primary/40" : "",
-                    )
-                  : "border-border/80 bg-secondary/80 hover:bg-secondary hover:border-primary/40",
-              )}
-            >
-              {isFlipped ? (
-                <div className="flex items-center justify-center transition-all transform scale-100 animate-in fade-in zoom-in duration-200">
-                  <IconComp className={cn("h-7 w-7 sm:h-8 sm:w-8", c.item.colorClass)} strokeWidth={2.2} />
-                </div>
-              ) : (
-                <HelpCircle className="h-5 w-5 text-muted-foreground/40" />
-              )}
-            </button>
-          );
-        })}
+        {/* Cuadrícula 4x3 de cartas con gráficos SVG nítidos */}
+        <div className="grid grid-cols-4 gap-2.5 w-full">
+          {cartas.map((c) => {
+            const isFlipped = abiertas.includes(c.id) || hechas.includes(c.id);
+            const isMatched = hechas.includes(c.id);
+            const IconComp = c.item.icon;
+
+            return (
+              <button
+                key={c.id}
+                onClick={() => voltear(c.id)}
+                disabled={isMatched}
+                className={cn(
+                  "flex aspect-square items-center justify-center rounded-2xl border-2 transition-all duration-300 active:scale-95 shadow-sm",
+                  isFlipped
+                    ? cn(
+                        c.item.bgClass,
+                        c.item.borderClass,
+                        "shadow-[0_0_20px_rgba(255,255,255,0.15)]",
+                        isMatched ? "opacity-90 ring-2 ring-primary/40" : "",
+                      )
+                    : "border-border/80 bg-secondary/80 hover:bg-secondary hover:border-primary/40",
+                )}
+              >
+                {isFlipped ? (
+                  <div className="flex items-center justify-center transition-all transform scale-100 animate-in fade-in zoom-in duration-200">
+                    <IconComp className={cn("h-7 w-7 sm:h-8 sm:w-8", c.item.colorClass)} strokeWidth={2.2} />
+                  </div>
+                ) : (
+                  <HelpCircle className="h-5 w-5 text-muted-foreground/40" />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
-
-      {completo ? (
-        <p className="text-center text-sm font-semibold text-primary mb-2 animate-bounce">
-          🎉 ¡Completado en {movs} movimientos!
-        </p>
-      ) : null}
 
       <div className="w-full space-y-2">
         <Button
@@ -361,7 +454,30 @@ export function StroopGame({ registrar }: { registrar: Registrar }) {
         ]}
       />
 
-      <div className="w-full my-auto space-y-4">
+      <div className="w-full my-auto space-y-3">
+        {/* Cuadro flotante de aviso de turno */}
+        <div className="h-10 flex items-center justify-center">
+          {corriendo ? (
+            <CuadroFlotanteTurno
+              variante="turno"
+              texto="⚡ ¡Te toca a ti!"
+              subtexto="Color de la tinta"
+            />
+          ) : segundos === 0 ? (
+            <CuadroFlotanteTurno
+              variante="exito"
+              texto="⏱️ ¡Tiempo finalizado!"
+              subtexto={`${aciertos} aciertos`}
+            />
+          ) : (
+            <CuadroFlotanteTurno
+              variante="info"
+              texto="Control Inhibitorio"
+              subtexto="45 segundos"
+            />
+          )}
+        </div>
+
         <Progress value={(segundos / 45) * 100} className="h-1.5" />
 
         <div className="flex h-28 items-center justify-center rounded-3xl border-2 border-border/80 bg-secondary/40 shadow-inner">
@@ -480,7 +596,30 @@ export function CalculoGame({ registrar }: { registrar: Registrar }) {
         ]}
       />
 
-      <div className="w-full my-auto space-y-4">
+      <div className="w-full my-auto space-y-3">
+        {/* Cuadro flotante de aviso de turno */}
+        <div className="h-10 flex items-center justify-center">
+          {corriendo ? (
+            <CuadroFlotanteTurno
+              variante="turno"
+              texto="🧠 ¡Te toca a ti!"
+              subtexto="Calcula rápido"
+            />
+          ) : segundos === 0 ? (
+            <CuadroFlotanteTurno
+              variante="exito"
+              texto="⏱️ ¡Ronda finalizada!"
+              subtexto={`${aciertos} aciertos (${precision}%)`}
+            />
+          ) : (
+            <CuadroFlotanteTurno
+              variante="info"
+              texto="Agilidad de Cálculo"
+              subtexto="60 segundos"
+            />
+          )}
+        </div>
+
         <Progress value={(segundos / 60) * 100} className="h-1.5" />
 
         <div className="flex h-28 items-center justify-center rounded-3xl border-2 border-border/80 bg-secondary/40 shadow-inner">
