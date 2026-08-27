@@ -31,7 +31,7 @@ export const Route = createFileRoute("/laboratorio")({
       },
     ],
   }),
-  component: Laboratorio;
+  component: Laboratorio,
 });
 
 const VOCES = [
