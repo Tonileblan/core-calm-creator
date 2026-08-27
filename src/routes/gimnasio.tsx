@@ -94,6 +94,22 @@ function Gimnasio() {
           }}
         />
 
+        <MindGames
+          registrar={(ejercicio, minutos, detalle) => {
+            if (!user) return;
+            void supabase
+              .from("mental_gym_stats")
+              .insert({
+                user_id: user.id,
+                tipo_ejercicio: ejercicio,
+                duracion_minutos: minutos,
+                completado: true,
+                detalle,
+              })
+              .then(() => queryClient.invalidateQueries({ queryKey: ["gym"] }));
+          }}
+        />
+
         {signedIn ? (
           <Reencuadre onSaved={() => queryClient.invalidateQueries({ queryKey: ["gym"] })} />
         ) : (
