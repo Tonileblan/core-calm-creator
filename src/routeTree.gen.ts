@@ -14,6 +14,7 @@ import { Route as AudioRouteImport } from './routes/audio'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as GimnasioRouteImport } from './routes/gimnasio'
 import { Route as LaboratorioRouteImport } from './routes/laboratorio'
+import { Route as PerfilRouteImport } from './routes/perfil'
 import { Route as RespiracionRouteImport } from './routes/respiracion'
 
 const IndexRoute = IndexRouteImport.update({
@@ -41,6 +42,11 @@ const LaboratorioRoute = LaboratorioRouteImport.update({
   path: '/laboratorio',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PerfilRoute = PerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RespiracionRoute = RespiracionRouteImport.update({
   id: '/respiracion',
   path: '/respiracion',
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
+  '/perfil': typeof PerfilRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +68,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
+  '/perfil': typeof PerfilRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRoutesById {
@@ -70,14 +78,28 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
+  '/perfil': typeof PerfilRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/audio' | '/auth' | '/gimnasio' | '/laboratorio' | '/respiracion'
+    | '/'
+    | '/audio'
+    | '/auth'
+    | '/gimnasio'
+    | '/laboratorio'
+    | '/perfil'
+    | '/respiracion'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/audio' | '/auth' | '/gimnasio' | '/laboratorio' | '/respiracion'
+  to:
+    | '/'
+    | '/audio'
+    | '/auth'
+    | '/gimnasio'
+    | '/laboratorio'
+    | '/perfil'
+    | '/respiracion'
   id:
     | '__root__'
     | '/'
@@ -85,6 +107,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/gimnasio'
     | '/laboratorio'
+    | '/perfil'
     | '/respiracion'
   fileRoutesById: FileRoutesById
 }
@@ -94,6 +117,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   GimnasioRoute: typeof GimnasioRoute
   LaboratorioRoute: typeof LaboratorioRoute
+  PerfilRoute: typeof PerfilRoute
   RespiracionRoute: typeof RespiracionRoute
 }
 
@@ -134,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaboratorioRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/perfil': {
+      id: '/perfil'
+      path: '/perfil'
+      fullPath: '/perfil'
+      preLoaderRoute: typeof PerfilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/respiracion': {
       id: '/respiracion'
       path: '/respiracion'
@@ -150,6 +181,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   GimnasioRoute: GimnasioRoute,
   LaboratorioRoute: LaboratorioRoute,
+  PerfilRoute: PerfilRoute,
   RespiracionRoute: RespiracionRoute,
 }
 export const routeTree = rootRouteImport
