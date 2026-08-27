@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import {
   AlarmClock,
@@ -164,18 +164,32 @@ function Perfil() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Auto-seleccionar primera canción si está disponible
+  useEffect(() => {
+    if (canciones.length > 0 && !cancionSeleccionada) {
+      setCancionSeleccionada(canciones[0] ?? null);
+    }
+  }, [canciones, cancionSeleccionada]);
+
   const crearAlarma = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Sin sesión");
       if (!dias.length) throw new Error("Selecciona al menos un día de la semana.");
 
       let sonidoConfig: AlarmaConfig;
-      if (tabSonido === "musica" && cancionSeleccionada) {
+      if (tabSonido === "musica") {
+        const cancion = cancionSeleccionada || canciones[0];
+        if (!cancion) {
+          throw new Error("No tienes canciones en tu Banda Sonora. Guarda una primero en la sección de Audio.");
+        }
         sonidoConfig = {
           sonidoTipo: "musica",
-          sonidoId: cancionSeleccionada.id,
-          sonidoTitulo: `${cancionSeleccionada.nombre_cancion}${cancionSeleccionada.artista ? ` · ${cancionSeleccionada.artista}` : ""}`,
-          sonidoUrl: cancionSeleccionada.url_enlace,
+          sonidoId: cancion.id,
+          sonidoTitulo: `${cancion.nombre_cancion}${cancion.artista ? ` · ${cancion.artista}` : ""}`,
+          sonidoUrl: cancion.url_enlace,
           actividadId: actividadSeleccionada.id,
           actividadTitulo: actividadSeleccionada.titulo,
           actividadCategoria: actividadSeleccionada.categoria,
@@ -450,8 +464,10 @@ function Perfil() {
                       </div>
                     ) : (
                       <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                        <audio ref={previewAudioRef} />
                         {canciones.map((c) => {
                           const isSel = cancionSeleccionada?.id === c.id;
+                          const isPreviewing = audioPreviewUrl === c.url_enlace;
                           return (
                             <div
                               key={c.id}
@@ -469,7 +485,30 @@ function Perfil() {
                                   {c.artista ?? "Pista"} · <span className="capitalize">{c.categoria_momento}</span>
                                 </p>
                               </div>
-                              {isSel && <CheckCircle className="h-4 w-4 text-primary shrink-0 ml-2" />}
+                              <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isPreviewing) {
+                                      if (previewAudioRef.current) previewAudioRef.current.pause();
+                                      setAudioPreviewUrl(null);
+                                    } else {
+                                      setCancionSeleccionada(c);
+                                      setAudioPreviewUrl(c.url_enlace);
+                                      if (previewAudioRef.current) {
+                                        previewAudioRef.current.src = c.url_enlace;
+                                        previewAudioRef.current.play().catch(() => toast.info(`Seleccionada: ${c.nombre_cancion}`));
+                                      }
+                                    }
+                                  }}
+                                  className="h-6 w-6 flex items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-primary"
+                                  title="Escuchar vista previa"
+                                >
+                                  <Play className="h-3 w-3 ml-0.5" />
+                                </button>
+                                {isSel && <CheckCircle className="h-4 w-4 text-primary shrink-0" />}
+                              </div>
                             </div>
                           );
                         })}

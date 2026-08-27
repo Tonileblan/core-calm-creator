@@ -135,6 +135,29 @@ export function AlarmListener() {
     return () => window.clearInterval(interval);
   }, [alarmas]);
 
+  // Cargar lista de canciones de la Banda Sonora para resolver URLs si es necesario
+  const { data: canciones = [] } = useQuery({
+    queryKey: ["soundtrack", user?.id],
+    enabled: signedIn,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vital_soundtrack")
+        .select("id, nombre_cancion, artista, categoria_momento, url_enlace")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Asegurar carga de YouTube Iframe API
+  useEffect(() => {
+    if (typeof window !== "undefined" && !(window as any).YT) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+    }
+  }, []);
+
   // Escuchar evento personalizado para probar alarma de inmediato desde el perfil
   useEffect(() => {
     const handleTest = (e: CustomEvent<AlarmaRow>) => {
@@ -144,50 +167,64 @@ export function AlarmListener() {
     };
     window.addEventListener("blowmind-test-alarm" as any, handleTest as any);
     return () => window.removeEventListener("blowmind-test-alarm" as any, handleTest as any);
-  }, []);
+  }, [canciones]);
 
   const iniciarAudioAlarma = (config: AlarmaConfig) => {
-    // Si es música personalizada
-    if (config.sonidoTipo === "musica" && config.sonidoUrl) {
-      const ytId = extractYouTubeVideoId(config.sonidoUrl);
-      if (ytId) {
-        if ((window as any).YT && (window as any).YT.Player) {
-          try {
-            if (!ytPlayerRef.current) {
-              ytPlayerRef.current = new (window as any).YT.Player("alarm-yt-player", {
-                height: "1",
-                width: "1",
-                videoId: ytId,
-                playerVars: { autoplay: 1, controls: 0 },
-                events: {
-                  onReady: (e: any) => e.target.playVideo(),
-                },
-              });
-            } else {
-              ytPlayerRef.current.loadVideoById(ytId);
-              ytPlayerRef.current.playVideo();
+    // Si es música seleccionada de la Banda Sonora
+    if (config.sonidoTipo === "musica") {
+      const cancion = canciones.find((c) => c.id === config.sonidoId);
+      const urlEfectiva = config.sonidoUrl || cancion?.url_enlace;
+
+      if (urlEfectiva) {
+        const ytId = extractYouTubeVideoId(urlEfectiva);
+        if (ytId) {
+          // Reproducción por YouTube
+          if ((window as any).YT && (window as any).YT.Player) {
+            try {
+              if (!ytPlayerRef.current) {
+                ytPlayerRef.current = new (window as any).YT.Player("alarm-yt-player", {
+                  height: "200",
+                  width: "200",
+                  videoId: ytId,
+                  playerVars: {
+                    autoplay: 1,
+                    controls: 0,
+                    disablekb: 1,
+                    playsinline: 1,
+                  },
+                  events: {
+                    onReady: (e: any) => {
+                      e.target.setVolume(100);
+                      e.target.playVideo();
+                    },
+                  },
+                });
+              } else {
+                ytPlayerRef.current.loadVideoById(ytId);
+                ytPlayerRef.current.setVolume(100);
+                ytPlayerRef.current.playVideo();
+              }
+            } catch (e) {
+              console.warn("Error reproduciendo YouTube en alarma:", e);
             }
-          } catch (e) {
-            console.warn("Fallo al reproducir YouTube en alarma:", e);
-            getAudioEngine().playAlarmMelody("zen");
           }
         } else {
-          getAudioEngine().playAlarmMelody("zen");
+          // Archivo de audio / video directo de Supabase
+          if (audioRef.current) {
+            audioRef.current.src = urlEfectiva;
+            audioRef.current.volume = 0.95;
+            audioRef.current.load();
+            audioRef.current.play().catch((err) => {
+              console.warn("Autoplay bloqueado por el navegador (esperando toque):", err);
+            });
+          }
         }
-      } else {
-        if (audioRef.current) {
-          audioRef.current.src = config.sonidoUrl;
-          audioRef.current.volume = 0.9;
-          audioRef.current.play().catch((err) => {
-            console.warn("Autoplay bloqueado por el navegador, activando sintetizador:", err);
-            getAudioEngine().playAlarmMelody("zen");
-          });
-        }
+        return;
       }
-    } else {
-      // Melodías armónicas y presets de la app
-      getAudioEngine().playAlarmMelody(config.sonidoId);
     }
+
+    // Melodías armónicas y presets de la app
+    getAudioEngine().playAlarmMelody(config.sonidoId);
   };
 
   const dispararAlarma = (alarma: AlarmaRow) => {
@@ -199,7 +236,7 @@ export function AlarmListener() {
     setGratitud3("");
     setEscrituraTexto("");
 
-    // Intentar iniciar la melodía
+    // Intentar iniciar la melodía seleccionada
     iniciarAudioAlarma(config);
 
     // Notificación nativa
@@ -214,7 +251,7 @@ export function AlarmListener() {
     }
 
     toast("⏰ ¡Alarma activa!", {
-      description: `${alarma.hora_programada.slice(0, 5)} · ${config.actividadTitulo}`,
+      description: `${alarma.hora_programada.slice(0, 5)} · ${config.sonidoTitulo}`,
     });
   };
 
@@ -254,38 +291,40 @@ export function AlarmListener() {
     }
   };
 
-  if (!alarmaSonando) return null;
-
-  const { config, alarma } = alarmaSonando;
-  const actividadDef = ACTIVIDADES_ALARMA.find((a) => a.id === config.actividadId);
+  const { config, alarma } = alarmaSonando ?? {};
+  const actividadDef = config ? ACTIVIDADES_ALARMA.find((a) => a.id === config.actividadId) : null;
 
   return (
     <>
-      <audio ref={audioRef} loop />
-      <div id="alarm-yt-player" className="hidden pointer-events-none" />
+      <audio ref={audioRef} loop preload="auto" />
+      <div
+        id="alarm-yt-player"
+        className="fixed -bottom-96 -right-96 opacity-0 pointer-events-none w-1 h-1 overflow-hidden"
+      />
 
       {/* Pantalla modal inmersiva de alarma */}
-      <div className="fixed inset-0 z-50 flex h-[100dvh] w-screen flex-col justify-between bg-background/98 backdrop-blur-2xl px-5 py-6 animate-in fade-in zoom-in-95 duration-300 touch-none select-none overscroll-none overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-md items-center justify-between pt-[env(safe-area-inset-top)]">
-          <div className="flex items-center gap-2">
-            <span className="flex h-3 w-3 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-primary" />
-            </span>
-            <span className="text-xs uppercase tracking-[0.2em] font-semibold text-primary">
-              Alarma Activa
-            </span>
-          </div>
+      {alarmaSonando && config && alarma && (
+        <div className="fixed inset-0 z-50 flex h-[100dvh] w-screen flex-col justify-between bg-background/98 backdrop-blur-2xl px-5 py-6 animate-in fade-in zoom-in-95 duration-300 touch-none select-none overscroll-none overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-md items-center justify-between pt-[env(safe-area-inset-top)]">
+            <div className="flex items-center gap-2">
+              <span className="flex h-3 w-3 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-primary" />
+              </span>
+              <span className="text-xs uppercase tracking-[0.2em] font-semibold text-primary">
+                Alarma Activa
+              </span>
+            </div>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
-            onClick={apagarAlarma}
-          >
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
+              onClick={apagarAlarma}
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
 
         {/* Centro de la alarma: Hora y actividad */}
         <div className="mx-auto flex w-full max-w-md flex-col items-center text-center my-auto py-4 space-y-4">
@@ -431,17 +470,18 @@ export function AlarmListener() {
             >
               <RotateCcw className="mr-2 h-3.5 w-3.5" /> Posponer 5 min
             </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              className="flex-1 rounded-full h-11 text-xs font-semibold hover:bg-destructive hover:text-destructive-foreground transition-colors cursor-pointer"
-              onClick={apagarAlarma}
-            >
-              Apagar alarma
-            </Button>
+              <Button
+                variant="secondary"
+                size="lg"
+                className="flex-1 rounded-full h-11 text-xs font-semibold hover:bg-destructive hover:text-destructive-foreground transition-colors cursor-pointer"
+                onClick={apagarAlarma}
+              >
+                Apagar alarma
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
