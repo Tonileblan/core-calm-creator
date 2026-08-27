@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { getAudioEngine, type SoundId } from "@/lib/audio-engine";
 import { reencuadrarPensamiento } from "@/lib/wellness.functions";
+import { MindGames } from "@/components/MindGames";
 
 export const Route = createFileRoute("/gimnasio")({
   head: () => ({
