@@ -105,7 +105,7 @@ function Gimnasio() {
                 tipo_ejercicio: ejercicio,
                 duracion_minutos: minutos,
                 completado: true,
-                detalle,
+                detalle: detalle as never,
               })
               .then(() => queryClient.invalidateQueries({ queryKey: ["gym"] }));
           }}
