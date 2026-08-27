@@ -196,7 +196,7 @@ function Perfil() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <AppHeader titulo="Perfil & Ajustes" subtitulo={user?.email ?? undefined} />
+      <AppHeader titulo="Perfil & Ajustes" subtitulo={user?.email ?? ""} />
 
       <div className="space-y-8 px-5">
         <div className="surface-panel space-y-4 p-5">
