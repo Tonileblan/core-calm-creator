@@ -56,57 +56,67 @@ export async function getYouTubeMetadata(url: string): Promise<YouTubeMetadata |
 }
 
 /**
- * Descarga el audio de un video de YouTube como un Blob
- * Utiliza múltiples endpoints de extracción de audio redundantes y seguros
+ * Descarga el video/audio de YouTube como un archivo Blob (MP4 o M4A).
+ * Da prioridad a streams combinados (itag 18 / 22 MP4) que contienen video + audio
+ * integrados y se reproducen nativamente en cualquier navegador.
  */
-export async function downloadYouTubeAudio(
+export async function downloadYouTubeMedia(
   url: string,
-  onProgress?: (msg: string) => void,
+  onProgress?: ((msg: string) => void) | undefined,
 ): Promise<{ blob: Blob; mimeType: string; filename: string }> {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) {
     throw new Error("El enlace proporcionado no es un video de YouTube válido.");
   }
 
-  onProgress?.("Conectando con el servidor de audio...");
+  onProgress?.("Conectando con el servidor de medios...");
 
-  // Lista de fuentes redundantes para extraer el stream de audio
-  const audioEndpoints = [
+  // Endpoints redundantes para extraer video MP4 o audio directo
+  // itag 18: MP4 360p con audio AAC integrado (muy ligero y rápido de descargar)
+  // itag 140: M4A audio AAC 128kbps
+  // itag 22: MP4 720p con audio integrado
+  const mediaEndpoints = [
+    // 1. Instancias Invidious (itag 18: video+audio MP4, itag 140: audio)
+    `https://inv.tux.pizza/latest_version?id=${videoId}&itag=18`,
+    `https://invidious.nerdvpn.de/latest_version?id=${videoId}&itag=18`,
+    `https://yewtu.be/latest_version?id=${videoId}&itag=18`,
+    `https://invidious.privacydev.net/latest_version?id=${videoId}&itag=18`,
     `https://inv.tux.pizza/latest_version?id=${videoId}&itag=140`,
     `https://invidious.nerdvpn.de/latest_version?id=${videoId}&itag=140`,
     `https://yewtu.be/latest_version?id=${videoId}&itag=140`,
-    `https://invidious.privacydev.net/latest_version?id=${videoId}&itag=140`,
+    // 2. Proxies de stream directo
     `https://yt-stream.deno.dev/audio/${videoId}`,
   ];
 
-  for (let i = 0; i < audioEndpoints.length; i++) {
-    const endpoint = audioEndpoints[i]!;
+  for (let i = 0; i < mediaEndpoints.length; i++) {
+    const endpoint = mediaEndpoints[i]!;
     try {
-      onProgress?.(`Descargando pista de audio (${i + 1}/${audioEndpoints.length})...`);
+      onProgress?.(`Descargando video/audio (${i + 1}/${mediaEndpoints.length})...`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 18000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
       const response = await fetch(endpoint, {
         signal: controller.signal,
         headers: {
-          Accept: "audio/*,video/mp4,application/octet-stream",
+          Accept: "video/mp4,audio/*,application/octet-stream",
         },
       });
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        const contentType = response.headers.get("content-type") || "audio/mp4";
+        const contentType = response.headers.get("content-type") || "video/mp4";
         if (
+          contentType.includes("video") ||
           contentType.includes("audio") ||
-          contentType.includes("video/mp4") ||
           contentType.includes("application/octet-stream")
         ) {
           const blob = await response.blob();
-          if (blob.size > 10000) {
+          if (blob.size > 15000) {
+            const isVideo = contentType.includes("video") || endpoint.includes("itag=18") || endpoint.includes("itag=22");
             return {
               blob,
-              mimeType: contentType.includes("audio") ? contentType : "audio/mp4",
-              filename: `youtube_${videoId}.m4a`,
+              mimeType: isVideo ? "video/mp4" : "audio/mp4",
+              filename: `youtube_${videoId}.${isVideo ? "mp4" : "m4a"}`,
             };
           }
         }
@@ -116,9 +126,9 @@ export async function downloadYouTubeAudio(
     }
   }
 
-  // Fallback con servicio de conversión
+  // Fallback con servicio Cobalt (descarga directa)
   try {
-    onProgress?.("Procesando pista de audio...");
+    onProgress?.("Procesando descarga de alta fidelidad...");
     const cobaltRes = await fetch("https://api.cobalt.tools", {
       method: "POST",
       headers: {
@@ -127,30 +137,33 @@ export async function downloadYouTubeAudio(
       },
       body: JSON.stringify({
         url: `https://www.youtube.com/watch?v=${videoId}`,
-        downloadMode: "audio",
-        audioFormat: "mp3",
+        videoQuality: "360",
+        downloadMode: "auto",
       }),
     });
 
     if (cobaltRes.ok) {
       const data = (await cobaltRes.json()) as { url?: string; status?: string };
       if (data.url) {
-        const audioFetch = await fetch(data.url);
-        if (audioFetch.ok) {
-          const blob = await audioFetch.blob();
+        const fetchRes = await fetch(data.url);
+        if (fetchRes.ok) {
+          const blob = await fetchRes.blob();
           return {
             blob,
-            mimeType: "audio/mpeg",
-            filename: `youtube_${videoId}.mp3`,
+            mimeType: "video/mp4",
+            filename: `youtube_${videoId}.mp4`,
           };
         }
       }
     }
   } catch (err) {
-    console.warn("Cobalt fallback:", err);
+    console.warn("Cobalt fallback falló:", err);
   }
 
   throw new Error(
-    "No se pudo descargar el audio de YouTube en este momento. Puedes subir el archivo de audio (.mp3 o .m4a) directamente.",
+    "No se pudo descargar el video/audio de YouTube en este momento. Puedes subir el archivo de audio o video directamente.",
   );
 }
+
+export const downloadYouTubeAudio = downloadYouTubeMedia;
+

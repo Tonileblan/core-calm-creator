@@ -1,10 +1,10 @@
 import { supabase } from "@/integrations/supabase/client";
-import { downloadYouTubeAudio, getYouTubeMetadata, isYouTubeUrl } from "./youtube-audio";
+import { downloadYouTubeMedia, getYouTubeMetadata, isYouTubeUrl } from "./youtube-audio";
 
 export const BUCKET_NAME = "soundtrack";
 
 /**
- * Sube un archivo de audio (Blob o File) a Supabase Storage
+ * Sube un archivo de video/audio (Blob o File) a Supabase Storage
  */
 export async function uploadAudioToSupabase(
   userId: string,
@@ -14,13 +14,15 @@ export async function uploadAudioToSupabase(
   const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const filePath = `${userId}/${Date.now()}_${cleanFilename}`;
 
+  const contentType = audioBlob.type || (filename.endsWith(".mp4") ? "video/mp4" : "audio/mpeg");
+
   // Intentar subir al bucket de Supabase
   const { data, error } = await supabase.storage
     .from(BUCKET_NAME)
     .upload(filePath, audioBlob, {
       cacheControl: "3600",
       upsert: true,
-      contentType: audioBlob.type || "audio/mpeg",
+      contentType,
     });
 
   if (error) {
@@ -30,7 +32,7 @@ export async function uploadAudioToSupabase(
       .upload(filePath, audioBlob, {
         cacheControl: "3600",
         upsert: true,
-        contentType: audioBlob.type || "audio/mpeg",
+        contentType,
       });
 
     if (fallback.error) {
@@ -56,7 +58,7 @@ export type AddCancionParams = {
 };
 
 /**
- * Procesa una canción: si es YouTube, la descarga y la sube a Supabase; si es archivo local, lo sube; luego guarda el registro en `vital_soundtrack`.
+ * Procesa una canción: si es YouTube, descarga el video/audio y lo sube a Supabase; si es archivo local, lo sube; luego guarda el registro en `vital_soundtrack`.
  */
 export async function procesarYGuardarCancion({
   userId,
@@ -91,18 +93,18 @@ export async function procesarYGuardarCancion({
         }
       }
 
-      onProgress?.("Descargando pista de audio de YouTube...");
-      const { blob, filename } = await downloadYouTubeAudio(inputUrl, onProgress);
+      onProgress?.("Descargando video/audio de YouTube...");
+      const { blob, filename } = await downloadYouTubeMedia(inputUrl, onProgress);
 
-      onProgress?.("Guardando archivo de audio en Supabase...");
+      onProgress?.("Guardando archivo en Supabase Storage...");
       finalAudioUrl = await uploadAudioToSupabase(userId, blob, filename);
     } else {
       // Es una URL directa o enlace general
       finalAudioUrl = inputUrl;
     }
   } else if (urlOrFile instanceof File) {
-    // Archivo de audio local seleccionado por el usuario
-    onProgress?.("Subiendo archivo de audio local a Supabase...");
+    // Archivo de audio/video local seleccionado por el usuario
+    onProgress?.("Subiendo archivo local a Supabase...");
     finalAudioUrl = await uploadAudioToSupabase(userId, urlOrFile, urlOrFile.name);
     if (!finalNombre) {
       finalNombre = urlOrFile.name.replace(/\.[^/.]+$/, "");
