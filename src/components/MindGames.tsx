@@ -260,7 +260,7 @@ function Parejas({ registrar }: { registrar: Registrar }) {
               key={c.id}
               onClick={() => voltear(c.id)}
               className={
-                "flex aspect-square items-center justify-center rounded-2xl border text-2xl transition-all duration-200 " +
+                "flex aspect-square items-center justify-center rounded-2xl border text-5xl transition-all duration-200 " +
                 (visible
                   ? "border-primary/50 bg-primary/10"
                   : "border-border bg-secondary text-transparent")
