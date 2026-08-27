@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AudioRouteImport } from './routes/audio'
+import { Route as LaboratorioRouteImport } from './routes/laboratorio'
 import { Route as RespiracionRouteImport } from './routes/respiracion'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const AudioRoute = AudioRouteImport.update({
   path: '/audio',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LaboratorioRoute = LaboratorioRouteImport.update({
+  id: '/laboratorio',
+  path: '/laboratorio',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RespiracionRoute = RespiracionRouteImport.update({
   id: '/respiracion',
   path: '/respiracion',
@@ -32,30 +38,34 @@ const RespiracionRoute = RespiracionRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/audio' | '/respiracion'
+  fullPaths: '/' | '/audio' | '/laboratorio' | '/respiracion'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/audio' | '/respiracion'
-  id: '__root__' | '/' | '/audio' | '/respiracion'
+  to: '/' | '/audio' | '/laboratorio' | '/respiracion'
+  id: '__root__' | '/' | '/audio' | '/laboratorio' | '/respiracion'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AudioRoute: typeof AudioRoute
+  LaboratorioRoute: typeof LaboratorioRoute
   RespiracionRoute: typeof RespiracionRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AudioRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/laboratorio': {
+      id: '/laboratorio'
+      path: '/laboratorio'
+      fullPath: '/laboratorio'
+      preLoaderRoute: typeof LaboratorioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/respiracion': {
       id: '/respiracion'
       path: '/respiracion'
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AudioRoute: AudioRoute,
+  LaboratorioRoute: LaboratorioRoute,
   RespiracionRoute: RespiracionRoute,
 }
 export const routeTree = rootRouteImport
