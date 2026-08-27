@@ -2,31 +2,61 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlarmClock, LogOut, Sunrise, Trash2 } from "lucide-react";
+import {
+  AlarmClock,
+  LogOut,
+  Trash2,
+  Plus,
+  Play,
+  Volume2,
+  Music4,
+  Heart,
+  PenTool,
+  Wind,
+  Brain,
+  Sparkles,
+  Sun,
+  Moon,
+  Timer,
+  CheckCircle,
+  BellRing,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { getAudioEngine } from "@/lib/audio-engine";
+import {
+  ACTIVIDADES_ALARMA,
+  PRESETS_SONIDO_ALARMA,
+  parseAlarmaConfig,
+  serializeAlarmaConfig,
+  type AlarmaConfig,
+  type ActividadAlarmaDef,
+} from "@/lib/alarm-types";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/perfil")({
   head: () => ({
     meta: [
-      { title: "Perfil, alarmas y recordatorios · Blowmind" },
+      { title: "Perfil y Sistema de Alarmas · Blowmind" },
       {
         name: "description",
         content:
-          "Configura tu despertar progresivo con ruido marrón o binaurales, recordatorios de pausa y tus preferencias de voz en Blowmind.",
+          "Configura tus alarmas con actividades de gratitud, escritura, respiración, gimnasio mental y tu música o sonidos preferidos.",
       },
-      { property: "og:title", content: "Perfil y compromiso · Blowmind" },
+      { property: "og:title", content: "Alarmas y Compromiso · Blowmind" },
       {
         property: "og:description",
         content:
-          "Alarmas de despertar progresivo y recordatorios de pausa para mantener tus hábitos de bienestar.",
+          "Alarmas personalizadas con actividades vinculadas y música de tu banda sonora o frecuencias.",
       },
     ],
   }),
@@ -34,12 +64,6 @@ export const Route = createFileRoute("/perfil")({
 });
 
 const DIAS = ["L", "M", "X", "J", "V", "S", "D"];
-
-const TIPOS = [
-  { id: "despertar_progresivo", label: "Despertar progresivo", icon: Sunrise },
-  { id: "pausa_respiracion", label: "Pausa de respiración", icon: AlarmClock },
-  { id: "checkin_rapido", label: "Check-in rápido", icon: AlarmClock },
-];
 
 type Alarma = {
   id: string;
@@ -50,14 +74,36 @@ type Alarma = {
   activa: boolean;
 };
 
+type Cancion = {
+  id: string;
+  nombre_cancion: string;
+  artista: string | null;
+  categoria_momento: string;
+  url_enlace: string;
+};
+
 function Perfil() {
   const { user, signedIn } = useAuth();
   const queryClient = useQueryClient();
+
   const [nombre, setNombre] = useState("");
-  const [tipo, setTipo] = useState(TIPOS[0]!.id);
+  const [permiso, setPermiso] = useState<NotificationPermission>("default");
+
+  // Estado del creador de alarmas
+  const [mostrarCreador, setMostrarCreador] = useState(false);
   const [hora, setHora] = useState("07:00");
   const [dias, setDias] = useState<string[]>(["L", "M", "X", "J", "V"]);
-  const [permiso, setPermiso] = useState<NotificationPermission>("default");
+  const [tipoAlarmaLabel, setTipoAlarmaLabel] = useState("Despertar consciente");
+
+  // Configuración de sonido
+  const [tabSonido, setTabSonido] = useState<"preset" | "musica">("preset");
+  const [presetSeleccionado, setPresetSeleccionado] = useState(PRESETS_SONIDO_ALARMA[0]!.id);
+  const [cancionSeleccionada, setCancionSeleccionada] = useState<Cancion | null>(null);
+
+  // Configuración de actividad
+  const [actividadSeleccionada, setActividadSeleccionada] = useState<ActividadAlarmaDef>(
+    ACTIVIDADES_ALARMA[0]!,
+  );
 
   useEffect(() => {
     if (typeof Notification !== "undefined") setPermiso(Notification.permission);
@@ -93,6 +139,19 @@ function Perfil() {
     },
   });
 
+  const { data: canciones = [] } = useQuery({
+    queryKey: ["soundtrack", user?.id],
+    enabled: signedIn,
+    queryFn: async (): Promise<Cancion[]> => {
+      const { data, error } = await supabase
+        .from("vital_soundtrack")
+        .select("id, nombre_cancion, artista, categoria_momento, url_enlace")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   const guardarPerfil = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Sin sesión");
@@ -108,18 +167,45 @@ function Perfil() {
   const crearAlarma = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Sin sesión");
+      if (!dias.length) throw new Error("Selecciona al menos un día de la semana.");
+
+      let sonidoConfig: AlarmaConfig;
+      if (tabSonido === "musica" && cancionSeleccionada) {
+        sonidoConfig = {
+          sonidoTipo: "musica",
+          sonidoId: cancionSeleccionada.id,
+          sonidoTitulo: `${cancionSeleccionada.nombre_cancion}${cancionSeleccionada.artista ? ` · ${cancionSeleccionada.artista}` : ""}`,
+          sonidoUrl: cancionSeleccionada.url_enlace,
+          actividadId: actividadSeleccionada.id,
+          actividadTitulo: actividadSeleccionada.titulo,
+          actividadCategoria: actividadSeleccionada.categoria,
+        };
+      } else {
+        const p = PRESETS_SONIDO_ALARMA.find((x) => x.id === presetSeleccionado) ?? PRESETS_SONIDO_ALARMA[0]!;
+        sonidoConfig = {
+          sonidoTipo: "preset",
+          sonidoId: p.id,
+          sonidoTitulo: p.nombre,
+          actividadId: actividadSeleccionada.id,
+          actividadTitulo: actividadSeleccionada.titulo,
+          actividadCategoria: actividadSeleccionada.categoria,
+        };
+      }
+
       const { error } = await supabase.from("alarms_settings").insert({
         user_id: user.id,
-        tipo_alarma: tipo,
+        tipo_alarma: tipoAlarmaLabel.trim() || actividadSeleccionada.titulo,
         hora_programada: hora,
         dias_semana: dias,
-        accion_vinculada: tipo === "despertar_progresivo" ? "brown" : "respiracion",
+        accion_vinculada: serializeAlarmaConfig(sonidoConfig),
+        activa: true,
       });
       if (error) throw error;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["alarms"] });
-      toast.success("Alarma creada");
+      setMostrarCreador(false);
+      toast.success("Alarma configurada y activada");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -140,45 +226,24 @@ function Perfil() {
       const { error } = await supabase.from("alarms_settings").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["alarms"] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["alarms"] });
+      toast.success("Alarma eliminada");
+    },
   });
 
-  // Comprobación local de alarmas (mientras la app está abierta).
-  useEffect(() => {
-    if (!alarmas.length) return;
-    const disparadas = new Set<string>();
-    const t = window.setInterval(() => {
-      const now = new Date();
-      const hhmm = now.toTimeString().slice(0, 5);
-      const dia = DIAS[(now.getDay() + 6) % 7]!;
-      alarmas.forEach((a) => {
-        const key = `${a.id}-${now.toDateString()}-${hhmm}`;
-        if (
-          a.activa &&
-          a.hora_programada.slice(0, 5) === hhmm &&
-          a.dias_semana.includes(dia) &&
-          !disparadas.has(key)
-        ) {
-          disparadas.add(key);
-          if (a.tipo_alarma === "despertar_progresivo") {
-            getAudioEngine().progressiveWake("brown", 120);
-          } else {
-            getAudioEngine().chime(528, 1.2);
-          }
-          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            new Notification("Blowmind", {
-              body:
-                a.tipo_alarma === "despertar_progresivo"
-                  ? "Despertar progresivo en marcha"
-                  : "Momento de pausa: respira o registra tu check-in",
-            });
-          }
-          toast("Blowmind", { description: TIPOS.find((x) => x.id === a.tipo_alarma)?.label });
-        }
-      });
-    }, 20000);
-    return () => window.clearInterval(t);
-  }, [alarmas]);
+  // Probar sonido antes de guardar
+  const probarSonido = (presetId: string) => {
+    if (presetId === "brown") {
+      getAudioEngine().progressiveWake("brown", 20);
+    } else if (presetId === "chime") {
+      getAudioEngine().chime(528, 1.5);
+    } else {
+      getAudioEngine().play(presetId as any);
+    }
+    toast.info("Reproduciendo vista previa de sonido (10s)");
+    setTimeout(() => getAudioEngine().stop(), 8000);
+  };
 
   if (!signedIn) {
     return (
@@ -195,10 +260,11 @@ function Perfil() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl pb-24 touch-lock">
       <AppHeader titulo="Perfil & Ajustes" subtitulo={user?.email ?? ""} />
 
       <div className="space-y-8 px-5">
+        {/* Información personal */}
         <div className="surface-panel space-y-4 p-5">
           <div className="space-y-2">
             <Label htmlFor="nombre">Nombre</Label>
@@ -218,126 +284,335 @@ function Perfil() {
           </Button>
         </div>
 
-        <div className="surface-panel space-y-5 p-5">
-          <div>
-            <h2 className="font-display text-xl">Alarmas y recordatorios</h2>
-            <p className="text-xs text-muted-foreground">
-              Gestor de compromiso: despertar progresivo y pausas.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {TIPOS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTipo(t.id)}
-                className={
-                  "rounded-full border px-3 py-1.5 text-xs transition-colors " +
-                  (tipo === t.id
-                    ? "border-primary bg-primary/15 text-primary"
-                    : "border-border text-muted-foreground")
-                }
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="hora">Hora</Label>
-              <Input
-                id="hora"
-                type="time"
-                value={hora}
-                onChange={(e) => setHora(e.target.value)}
-                className="w-32"
-              />
+        {/* ── SECCIÓN DE ALARMAS Y RECORDATORIOS ── */}
+        <div className="surface-panel space-y-6 p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-display text-xl font-semibold flex items-center gap-2">
+                <AlarmClock className="h-5 w-5 text-primary" />
+                Sistema de Alarmas
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Elige la música/sonido y la actividad de bienestar que comenzará al sonar.
+              </p>
             </div>
-            <div className="space-y-2">
-              <Label>Días</Label>
-              <div className="flex gap-1">
-                {DIAS.map((d) => (
-                  <button
-                    key={d}
-                    onClick={() =>
-                      setDias((prev) =>
-                        prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d],
-                      )
-                    }
-                    className={
-                      "h-8 w-8 rounded-full border text-xs transition-colors " +
-                      (dias.includes(d)
-                        ? "border-primary bg-primary/15 text-primary"
-                        : "border-border text-muted-foreground")
-                    }
-                  >
-                    {d}
-                  </button>
-                ))}
+            <Button
+              size="sm"
+              className="rounded-full gap-1 text-xs"
+              onClick={() => setMostrarCreador(!mostrarCreador)}
+            >
+              {mostrarCreador ? (
+                <>
+                  <ChevronUp className="h-4 w-4" /> Cancelar
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" /> Nueva Alarma
+                </>
+              )}
+            </Button>
+          </div>
+
+          {/* Formulario Creador de Alarma */}
+          {mostrarCreador && (
+            <div className="rounded-2xl border border-primary/40 bg-secondary/30 p-5 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+              <h3 className="font-display text-base font-semibold text-foreground">
+                Configurar Nueva Alarma
+              </h3>
+
+              {/* 1. Hora y Días */}
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  1. Horario y Repetición
+                </Label>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="hora-alarma" className="text-xs text-muted-foreground">
+                      Hora
+                    </Label>
+                    <Input
+                      id="hora-alarma"
+                      type="time"
+                      value={hora}
+                      onChange={(e) => setHora(e.target.value)}
+                      className="w-32 text-base font-semibold"
+                    />
+                  </div>
+                  <div className="space-y-1.5 flex-1 min-w-[200px]">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">Días</Label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDias(dias.length === 7 ? ["L", "M", "X", "J", "V"] : ["L", "M", "X", "J", "V", "S", "D"])
+                        }
+                        className="text-[0.7rem] text-primary hover:underline cursor-pointer"
+                      >
+                        {dias.length === 7 ? "Lun-Vie" : "Todos los días"}
+                      </button>
+                    </div>
+                    <div className="flex gap-1">
+                      {DIAS.map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() =>
+                            setDias((prev) =>
+                              prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d],
+                            )
+                          }
+                          className={cn(
+                            "h-8 w-8 rounded-full border text-xs font-medium transition-colors cursor-pointer",
+                            dias.includes(d)
+                              ? "border-primary bg-primary text-primary-foreground font-semibold shadow-sm"
+                              : "border-border text-muted-foreground hover:border-primary/40",
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <Input
+                  value={tipoAlarmaLabel}
+                  onChange={(e) => setTipoAlarmaLabel(e.target.value)}
+                  placeholder="Etiqueta (ej. Despertar enérgico, Pausa de gratitud)"
+                  className="text-xs"
+                />
               </div>
+
+              {/* 2. Selección de Música o Sonido */}
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  2. Música o Sonido de la Alarma
+                </Label>
+                <Tabs
+                  value={tabSonido}
+                  onValueChange={(v) => setTabSonido(v as "preset" | "musica")}
+                >
+                  <TabsList className="grid grid-cols-2 rounded-full h-9">
+                    <TabsTrigger value="preset" className="text-xs rounded-full">
+                      <Volume2 className="h-3.5 w-3.5 mr-1.5" /> Sonidos de la App
+                    </TabsTrigger>
+                    <TabsTrigger value="musica" className="text-xs rounded-full">
+                      <Music4 className="h-3.5 w-3.5 mr-1.5" /> Mi Música (Banda Sonora)
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="preset" className="space-y-2 mt-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {PRESETS_SONIDO_ALARMA.map((p) => {
+                        const isSel = presetSeleccionado === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => setPresetSeleccionado(p.id)}
+                            className={cn(
+                              "flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer text-left",
+                              isSel
+                                ? "border-primary bg-primary/10 text-primary font-medium"
+                                : "border-border/60 hover:border-primary/40",
+                            )}
+                          >
+                            <div className="min-w-0 pr-2">
+                              <p className="text-xs font-medium truncate">{p.nombre}</p>
+                              <p className="text-[0.65rem] text-muted-foreground truncate">
+                                {p.descripcion}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                probarSonido(p.id);
+                              }}
+                              className="h-6 w-6 shrink-0 flex items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-primary"
+                              title="Probar sonido"
+                            >
+                              <Play className="h-3 w-3 ml-0.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="musica" className="space-y-2 mt-3">
+                    {canciones.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed text-center space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          Aún no has guardado canciones en tu Banda Sonora Vital.
+                        </p>
+                        <Link to="/audio" className="text-xs text-primary underline">
+                          Ir a Audio y añadir canciones
+                        </Link>
+                      </div>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                        {canciones.map((c) => {
+                          const isSel = cancionSeleccionada?.id === c.id;
+                          return (
+                            <div
+                              key={c.id}
+                              onClick={() => setCancionSeleccionada(c)}
+                              className={cn(
+                                "flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer",
+                                isSel
+                                  ? "border-primary bg-primary/10 text-primary font-medium"
+                                  : "border-border/60 hover:border-primary/40",
+                              )}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-medium truncate">{c.nombre_cancion}</p>
+                                <p className="text-[0.65rem] text-muted-foreground truncate">
+                                  {c.artista ?? "Pista"} · <span className="capitalize">{c.categoria_momento}</span>
+                                </p>
+                              </div>
+                              {isSel && <CheckCircle className="h-4 w-4 text-primary shrink-0 ml-2" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </div>
+
+              {/* 3. Selección de Actividad Vinculada */}
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  3. Actividad al Sonar la Alarma
+                </Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  {ACTIVIDADES_ALARMA.map((act) => {
+                    const isSel = actividadSeleccionada.id === act.id;
+                    const IconComponent = act.icon;
+                    return (
+                      <div
+                        key={act.id}
+                        onClick={() => setActividadSeleccionada(act)}
+                        className={cn(
+                          "flex items-start gap-2.5 p-2.5 rounded-xl border transition-all cursor-pointer text-left",
+                          isSel
+                            ? "border-primary bg-primary/10 shadow-sm"
+                            : "border-border/60 hover:border-primary/40",
+                        )}
+                      >
+                        <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg mt-0.5", act.bgClass, act.colorClass)}>
+                          <IconComponent className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={cn("text-xs font-medium truncate", isSel ? "text-primary font-semibold" : "")}>
+                            {act.titulo}
+                          </p>
+                          <p className="text-[0.65rem] text-muted-foreground line-clamp-1">
+                            {act.subtitulo}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Botón de Confirmación */}
+              <Button
+                className="w-full rounded-full h-11 text-sm font-semibold shadow-md"
+                onClick={() => crearAlarma.mutate()}
+                disabled={crearAlarma.isPending || !dias.length}
+              >
+                Guardar y Activar Alarma
+              </Button>
             </div>
-          </div>
+          )}
 
-          <Button
-            className="rounded-full"
-            onClick={() => crearAlarma.mutate()}
-            disabled={crearAlarma.isPending || !dias.length}
-          >
-            Crear alarma
-          </Button>
-
+          {/* Permiso de notificaciones */}
           {permiso !== "granted" ? (
             <button
               className="text-xs text-primary underline"
               onClick={() => void Notification.requestPermission().then(setPermiso)}
             >
-              Activar notificaciones del navegador
+              Activar notificaciones del navegador para avisos en segundo plano
             </button>
           ) : null}
 
-          <div className="space-y-2">
-            {alarmas.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 rounded-xl border border-border px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {a.hora_programada.slice(0, 5)} ·{" "}
-                    {TIPOS.find((t) => t.id === a.tipo_alarma)?.label ?? a.tipo_alarma}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {a.dias_semana.join(" · ")}
-                  </p>
-                </div>
-                <Switch
-                  checked={a.activa}
-                  onCheckedChange={() => toggleAlarma.mutate(a)}
-                  aria-label="Activar alarma"
-                />
-                <button
-                  onClick={() => borrarAlarma.mutate(a.id)}
-                  className="text-muted-foreground transition-colors hover:text-destructive"
-                  aria-label="Eliminar alarma"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
+          {/* Lista de Alarmas Guardadas */}
+          <div className="space-y-3">
+            {alarmas.length === 0 ? (
+              <p className="text-xs text-center text-muted-foreground py-6 border border-dashed rounded-2xl">
+                No tienes ninguna alarma configurada. Pulsa &quot;Nueva Alarma&quot; para crear una.
+              </p>
+            ) : (
+              alarmas.map((a) => {
+                const config = parseAlarmaConfig(a.accion_vinculada);
+                const act = ACTIVIDADES_ALARMA.find((x) => x.id === config.actividadId);
+                const ActIcon = act?.icon ?? AlarmClock;
 
-          <div className="rounded-xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">
-              Prueba el despertar progresivo: el ruido marrón sube de volumen poco a poco.
-            </p>
-            <Button
-              variant="secondary"
-              className="mt-3 rounded-full"
-              onClick={() => getAudioEngine().progressiveWake("brown", 60)}
-            >
-              Probar 1 min
-            </Button>
+                return (
+                  <div
+                    key={a.id}
+                    className={cn(
+                      "flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border p-4 transition-all duration-200",
+                      a.activa ? "border-primary/40 bg-surface shadow-sm" : "border-border/60 opacity-60",
+                    )}
+                  >
+                    <div className="space-y-1.5 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <span className="font-display text-2xl font-bold tracking-tight text-foreground">
+                          {a.hora_programada.slice(0, 5)}
+                        </span>
+                        <span className="text-xs font-semibold text-foreground/80 truncate">
+                          {a.tipo_alarma}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Chip de Actividad */}
+                        <span className={cn("inline-flex items-center gap-1 text-[0.65rem] px-2 py-0.5 rounded-full font-medium", act?.bgClass ?? "bg-secondary", act?.colorClass ?? "text-muted-foreground")}>
+                          <ActIcon className="h-3 w-3" />
+                          {config.actividadTitulo}
+                        </span>
+
+                        {/* Chip de Sonido / Música */}
+                        <span className="inline-flex items-center gap-1 text-[0.65rem] px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">
+                          {config.sonidoTipo === "musica" ? (
+                            <Music4 className="h-3 w-3 text-primary" />
+                          ) : (
+                            <Volume2 className="h-3 w-3 text-primary" />
+                          )}
+                          <span className="truncate max-w-[150px]">{config.sonidoTitulo}</span>
+                        </span>
+
+                        {/* Días */}
+                        <span className="text-[0.65rem] text-muted-foreground">
+                          {a.dias_semana.join(" · ")}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/40">
+                      <Switch
+                        checked={a.activa}
+                        onCheckedChange={() => toggleAlarma.mutate(a)}
+                        aria-label="Activar alarma"
+                      />
+                      <button
+                        onClick={() => borrarAlarma.mutate(a.id)}
+                        className="text-muted-foreground/60 transition-colors hover:text-destructive p-1.5 cursor-pointer"
+                        aria-label="Eliminar alarma"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
+        {/* Cerrar sesión */}
         <Button
           variant="secondary"
           className="w-full rounded-full"
