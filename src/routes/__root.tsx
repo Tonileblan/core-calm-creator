@@ -132,11 +132,15 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen pb-24">
-        {/* Required: nested routes render here. */}
-        <Outlet />
+      <div className="h-[100dvh] max-h-[100dvh] w-screen max-w-full flex flex-col justify-between overflow-hidden touch-none select-none overscroll-none">
+        <main
+          className="flex-1 w-full overflow-y-auto scrollbar-none overscroll-none pb-1"
+          data-allow-scroll
+        >
+          <Outlet />
+        </main>
+        <BottomNav />
       </div>
-      <BottomNav />
       <Toaster position="top-center" />
     </QueryClientProvider>
   );

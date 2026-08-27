@@ -1,5 +1,6 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { Home, Wind, Music, Sparkles, Timer, User } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const items = [
   { to: "/", label: "Inicio", icon: Home },
@@ -11,19 +12,22 @@ const items = [
 ] as const;
 
 export function BottomNav() {
+  const router = useRouter();
+  const currentPath = router.state.location.pathname;
+
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface/85 backdrop-blur-xl">
-      <ul className="mx-auto flex max-w-2xl items-stretch justify-between px-2 pb-[env(safe-area-inset-bottom)]">
+    <nav className="shrink-0 w-full border-t border-border/80 bg-surface/90 backdrop-blur-2xl z-30 select-none touch-none">
+      <ul className="mx-auto flex max-w-2xl items-stretch justify-between px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
         {items.map(({ to, label, icon: Icon }) => (
           <li key={to} className="flex-1">
             <Link
               to={to}
               activeOptions={{ exact: to === "/" }}
-              className="flex flex-col items-center gap-1 py-3 text-[0.68rem] font-medium text-muted-foreground transition-colors"
-              activeProps={{ className: "!text-primary" }}
+              className="flex flex-col items-center gap-1 py-1.5 text-[0.68rem] font-medium text-muted-foreground transition-colors active:scale-95"
+              activeProps={{ className: "!text-primary font-semibold" }}
             >
-              <Icon className="h-5 w-5" strokeWidth={1.8} />
-              {label}
+              <Icon className="h-5 w-5" strokeWidth={1.9} />
+              <span>{label}</span>
             </Link>
           </li>
         ))}

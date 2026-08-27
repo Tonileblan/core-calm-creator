@@ -61,7 +61,7 @@ function Respiracion() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl flex flex-col justify-between h-[calc(100dvh-5.5rem)] px-5 touch-none select-none overscroll-none overflow-hidden">
+    <div className="mx-auto max-w-2xl flex flex-col justify-between h-full px-5 touch-none select-none overscroll-none overflow-hidden">
       <div>
         <AppHeader titulo="Respira" subtitulo={activo.claim} />
 
