@@ -2,11 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { Wind } from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
 import { BreathSession, PROTOCOLS } from "@/components/BreathSession";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { useScrollLock } from "@/hooks/useScrollLock";
+import { cn } from "@/lib/utils";
 
 const searchSchema = z.object({ p: z.string().optional() });
 
@@ -38,6 +41,9 @@ function Respiracion() {
     () => PROTOCOLS.find((x) => x.id === p) ?? PROTOCOLS[0]!,
   );
 
+  // Lock scroll so the respiration view is fixed in the device screen
+  useScrollLock(true);
+
   useEffect(() => {
     const found = PROTOCOLS.find((x) => x.id === p);
     if (found) setActivo(found);
@@ -55,21 +61,22 @@ function Respiracion() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl touch-lock">
-      <AppHeader titulo="Respira" subtitulo={activo.descripcion} />
+    <div className="mx-auto max-w-2xl flex flex-col justify-between h-[calc(100dvh-5.5rem)] px-5 touch-none select-none overscroll-none overflow-hidden">
+      <div>
+        <AppHeader titulo="Respira" subtitulo={activo.claim} />
 
-      <div className="px-5">
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none" data-allow-scroll>
+        {/* Selector horizontal de protocolos */}
+        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none" data-allow-scroll>
           {PROTOCOLS.map((prot) => (
             <button
               key={prot.id}
               onClick={() => setActivo(prot)}
-              className={
-                "shrink-0 rounded-full border px-4 py-2 text-xs font-medium transition-colors " +
-                (activo.id === prot.id
-                  ? "border-primary bg-primary/15 text-primary shadow-sm"
-                  : "border-border text-muted-foreground")
-              }
+              className={cn(
+                "shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                activo.id === prot.id
+                  ? "border-primary bg-primary/20 text-primary shadow-sm font-semibold"
+                  : "border-border text-muted-foreground hover:border-primary/40",
+              )}
             >
               {prot.nombre}
             </button>
@@ -77,17 +84,17 @@ function Respiracion() {
         </div>
       </div>
 
-      <div className="mt-6 px-5">
+      {/* Orbe central y sesión */}
+      <div className="my-auto py-2">
         <BreathSession protocol={activo} onComplete={onComplete} />
       </div>
 
-      <div className="mt-8 px-5">
-        <div className="surface-panel p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold">
-            {activo.claim}
-          </p>
-          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{activo.descripcion}</p>
-        </div>
+      {/* Nota descriptiva inferior compacta */}
+      <div className="surface-panel p-3.5 text-center mb-1">
+        <p className="text-[0.65rem] uppercase tracking-[0.2em] text-primary font-semibold">
+          {activo.claim}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{activo.descripcion}</p>
       </div>
     </div>
   );
