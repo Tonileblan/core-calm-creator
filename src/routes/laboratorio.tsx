@@ -79,7 +79,9 @@ function Laboratorio() {
   const crear = useMutation({
     mutationFn: async () => {
       const res = await generar({
-        data: { objetivo, metodologia, duracion, voz, contexto: contexto || undefined },
+        data: contexto.trim()
+          ? { objetivo, metodologia, duracion, voz, contexto: contexto.trim() }
+          : { objetivo, metodologia, duracion, voz },
       });
       return res as Meditacion;
     },
