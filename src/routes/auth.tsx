@@ -67,9 +67,9 @@ function AuthPage() {
   };
 
   const google = async () => {
-    const result = await lovable.auth.signInWithOAuth("google", {
+    const result = (await lovable.auth.signInWithOAuth("google", {
       redirect_uri: window.location.origin,
-    });
+    })) as { error?: unknown; redirected?: boolean };
     if (result.error) {
       toast.error("No se ha podido conectar con Google");
       return;
