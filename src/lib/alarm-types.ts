@@ -206,6 +206,24 @@ export const ACTIVIDADES_ALARMA: ActividadAlarmaDef[] = [
 
 export const PRESETS_SONIDO_ALARMA = [
   {
+    id: "zen",
+    nombre: "Melodía Zen Matutina (528 Hz)",
+    descripcion: "Arpegio pentatónico relajante y continuo de campanas armónicas.",
+    tipo: "melodia",
+  },
+  {
+    id: "aurora",
+    nombre: "Melodía Aurora (Solfeggio)",
+    descripcion: "Secuencia melódica envolvente y serena para despertar con paz.",
+    tipo: "melodia",
+  },
+  {
+    id: "energica",
+    nombre: "Melodía Vital (Energizante)",
+    descripcion: "Arpegio rítmico ascendente y brillante para activar el día.",
+    tipo: "melodia",
+  },
+  {
     id: "brown",
     nombre: "Ruido Marrón (Despertar Progresivo)",
     descripcion: "Sube de volumen gradualmente de forma suave y envolvente.",
@@ -230,6 +248,12 @@ export const PRESETS_SONIDO_ALARMA = [
     tipo: "binaural",
   },
   {
+    id: "chime",
+    nombre: "Campana Chime 528 Hz",
+    descripcion: "Tono armónico de frecuencia de transformación.",
+    tipo: "chime",
+  },
+  {
     id: "white",
     nombre: "Ruido Blanco",
     descripcion: "Aislamiento acústico constante.",
@@ -240,12 +264,6 @@ export const PRESETS_SONIDO_ALARMA = [
     nombre: "Ruido Rosa",
     descripcion: "Equilibrado y natural, ideal para pausas.",
     tipo: "ruido",
-  },
-  {
-    id: "chime",
-    nombre: "Campana Chime 528 Hz",
-    descripcion: "Tono armónico de frecuencia de transformación.",
-    tipo: "chime",
   },
 ];
 

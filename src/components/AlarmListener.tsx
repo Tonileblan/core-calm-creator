@@ -135,16 +135,19 @@ export function AlarmListener() {
     return () => window.clearInterval(interval);
   }, [alarmas]);
 
-  const dispararAlarma = (alarma: AlarmaRow) => {
-    const config = parseAlarmaConfig(alarma.accion_vinculada);
-    setAlarmaSonando({ alarma, config });
-    setAudioMuted(false);
-    setGratitud1("");
-    setGratitud2("");
-    setGratitud3("");
-    setEscrituraTexto("");
+  // Escuchar evento personalizado para probar alarma de inmediato desde el perfil
+  useEffect(() => {
+    const handleTest = (e: CustomEvent<AlarmaRow>) => {
+      if (e.detail) {
+        dispararAlarma(e.detail);
+      }
+    };
+    window.addEventListener("blowmind-test-alarm" as any, handleTest as any);
+    return () => window.removeEventListener("blowmind-test-alarm" as any, handleTest as any);
+  }, []);
 
-    // Reproducir audio configurado
+  const iniciarAudioAlarma = (config: AlarmaConfig) => {
+    // Si es música personalizada
     if (config.sonidoTipo === "musica" && config.sonidoUrl) {
       const ytId = extractYouTubeVideoId(config.sonidoUrl);
       if (ytId) {
@@ -166,39 +169,48 @@ export function AlarmListener() {
             }
           } catch (e) {
             console.warn("Fallo al reproducir YouTube en alarma:", e);
-            getAudioEngine().progressiveWake("brown", 120);
+            getAudioEngine().playAlarmMelody("zen");
           }
         } else {
-          getAudioEngine().progressiveWake("brown", 120);
+          getAudioEngine().playAlarmMelody("zen");
         }
       } else {
         if (audioRef.current) {
           audioRef.current.src = config.sonidoUrl;
-          audioRef.current.play().catch(() => {
-            getAudioEngine().progressiveWake("brown", 120);
+          audioRef.current.volume = 0.9;
+          audioRef.current.play().catch((err) => {
+            console.warn("Autoplay bloqueado por el navegador, activando sintetizador:", err);
+            getAudioEngine().playAlarmMelody("zen");
           });
         }
       }
     } else {
-      // Preset de la app
-      if (config.sonidoId === "brown") {
-        getAudioEngine().progressiveWake("brown", 120);
-      } else if (config.sonidoId === "chime") {
-        getAudioEngine().chime(528, 2.0);
-      } else if (
-        ["alpha", "theta", "delta", "white", "pink"].includes(config.sonidoId)
-      ) {
-        getAudioEngine().play(config.sonidoId as any);
-      } else {
-        getAudioEngine().progressiveWake("brown", 90);
-      }
+      // Melodías armónicas y presets de la app
+      getAudioEngine().playAlarmMelody(config.sonidoId);
     }
+  };
+
+  const dispararAlarma = (alarma: AlarmaRow) => {
+    const config = parseAlarmaConfig(alarma.accion_vinculada);
+    setAlarmaSonando({ alarma, config });
+    setAudioMuted(false);
+    setGratitud1("");
+    setGratitud2("");
+    setGratitud3("");
+    setEscrituraTexto("");
+
+    // Intentar iniciar la melodía
+    iniciarAudioAlarma(config);
 
     // Notificación nativa
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`Blowmind · ${config.actividadTitulo}`, {
-        body: `Es hora de tu alarma: ${config.actividadTitulo}. Toca para abrir.`,
-      });
+      try {
+        new Notification(`Blowmind · ${config.actividadTitulo}`, {
+          body: `Es hora de tu alarma: ${config.actividadTitulo}. Toca para abrir.`,
+        });
+      } catch (e) {
+        console.warn("Notificación nativa:", e);
+      }
     }
 
     toast("⏰ ¡Alarma activa!", {
@@ -207,7 +219,7 @@ export function AlarmListener() {
   };
 
   const apagarAlarma = () => {
-    getAudioEngine().stop();
+    getAudioEngine().stopAlarm();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
@@ -290,15 +302,23 @@ export function AlarmListener() {
             </p>
           </div>
 
-          {/* Badge del sonido / música sonando */}
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-secondary/80 px-3.5 py-1.5 text-xs text-foreground/90">
+          {/* Badge interactivo del sonido / música sonando */}
+          <button
+            type="button"
+            onClick={() => iniciarAudioAlarma(config)}
+            className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-secondary px-4 py-2 text-xs text-foreground/90 hover:bg-primary/20 transition-all cursor-pointer shadow-sm active:scale-95"
+            title="Toca para asegurar la reproducción de la melodía"
+          >
             {config.sonidoTipo === "musica" ? (
-              <Music4 className="h-3.5 w-3.5 text-primary animate-bounce" />
+              <Music4 className="h-4 w-4 text-primary animate-bounce" />
             ) : (
-              <Volume2 className="h-3.5 w-3.5 text-primary animate-pulse" />
+              <Volume2 className="h-4 w-4 text-primary animate-pulse" />
             )}
-            <span className="truncate max-w-[220px]">{config.sonidoTitulo}</span>
-          </div>
+            <span className="truncate max-w-[220px] font-medium">{config.sonidoTitulo}</span>
+            <span className="text-[0.65rem] text-primary/80 bg-primary/10 px-1.5 py-0.5 rounded-full">
+              🎵 Sonando
+            </span>
+          </button>
 
           {/* ── MÓDULO INTERACTIVO DIRECTO: AGRADECIMIENTOS ── */}
           {config.actividadCategoria === "gratitud" && (

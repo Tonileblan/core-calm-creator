@@ -591,7 +591,18 @@ function Perfil() {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/40">
+                    <div className="flex items-center justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/40">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent("blowmind-test-alarm", { detail: a }));
+                        }}
+                        className="rounded-full h-8 text-[0.7rem] gap-1 cursor-pointer border-primary/30 text-primary hover:bg-primary/10"
+                        title="Probar alarma ahora"
+                      >
+                        <BellRing className="h-3 w-3" /> Probar
+                      </Button>
                       <Switch
                         checked={a.activa}
                         onCheckedChange={() => toggleAlarma.mutate(a)}

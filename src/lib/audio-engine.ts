@@ -214,12 +214,12 @@ export class AudioEngine {
 
   /** Sube el volumen progresivamente (despertar progresivo). */
   progressiveWake(id: SoundId, seconds = 90) {
-    this.setVolume(0.03);
+    this.setVolume(0.05);
     this.play(id, 4);
     const start = Date.now();
     const timer = window.setInterval(() => {
       const p = Math.min(1, (Date.now() - start) / (seconds * 1000));
-      this.setVolume(0.03 + p * 0.7);
+      this.setVolume(0.05 + p * 0.75);
       if (p >= 1) window.clearInterval(timer);
     }, 1000);
     return () => window.clearInterval(timer);
@@ -235,16 +235,111 @@ export class AudioEngine {
     g.gain.value = 0.0001;
     osc.connect(g).connect(ctx.destination);
     const t = ctx.currentTime;
-    g.gain.setTargetAtTime(0.18 * this._volume + 0.05, t, 0.02);
+    g.gain.setTargetAtTime(0.25 * this._volume + 0.1, t, 0.02);
     g.gain.setTargetAtTime(0, t + duration * 0.4, duration / 4);
     osc.start(t);
     osc.stop(t + duration + 0.4);
+  }
+
+  private alarmInterval: number | null = null;
+
+  /**
+   * Reproduce una melodía de alarma rica y rítmica que suena continuamente hasta cancelarla
+   */
+  playAlarmMelody(soundId = "zen") {
+    this.stopAlarm();
+    const ctx = this.ensure();
+    if (ctx.state === "suspended") void ctx.resume();
+
+    // Notas de melodías (frecuencias en Hz)
+    const melodias: Record<string, number[]> = {
+      zen: [528, 660, 792, 990, 792, 660], // Escala pentatónica 528Hz
+      aurora: [396, 528, 639, 741, 852, 639], // Tonos Solfeggio
+      energica: [440, 554.37, 659.25, 880, 659.25, 554.37], // Acorde Mayor La brillante
+      chime: [528, 528, 660, 792],
+    };
+
+    const escala = melodias[soundId] ?? melodias["zen"]!;
+    let paso = 0;
+
+    // Si es un preset de ruido u ondas, iniciar también el fondo
+    if (["brown", "white", "pink", "alpha", "theta", "delta"].includes(soundId)) {
+      this.play(soundId as SoundId, 2);
+    }
+
+    const tocarNota = () => {
+      if (!this.ctx) return;
+      const freq = escala[paso % escala.length]!;
+      paso++;
+
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      // Mezcla de seno y triángulo para un tono de campana / arpa suave y cálido
+      osc.type = soundId === "energica" ? "triangle" : "sine";
+      osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.001, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.35 * Math.max(0.4, this._volume), this.ctx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 1.2);
+
+      osc.connect(gain);
+      gain.connect(this.master ?? this.ctx.destination);
+
+      osc.start(this.ctx.currentTime);
+      osc.stop(this.ctx.currentTime + 1.3);
+    };
+
+    // Tocar primera nota inmediatamente
+    tocarNota();
+    this.alarmInterval = window.setInterval(tocarNota, 700);
+  }
+
+  stopAlarm() {
+    if (this.alarmInterval) {
+      window.clearInterval(this.alarmInterval);
+      this.alarmInterval = null;
+    }
+    this.stop(0.4);
+  }
+
+  /**
+   * Desbloquea el AudioContext en la primera interacción del usuario en la ventana
+   */
+  unlockAudio() {
+    const unlock = () => {
+      const ctx = this.ensure();
+      if (ctx.state === "suspended") {
+        void ctx.resume().then(() => {
+          // Reproducir un micro-silencio para desbloquear hardware
+          const buf = ctx.createBuffer(1, 1, 22050);
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          src.connect(ctx.destination);
+          src.start(0);
+        });
+      }
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("touchstart", unlock);
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("pointerdown", unlock, { once: true, passive: true });
+      window.addEventListener("keydown", unlock, { once: true, passive: true });
+      window.addEventListener("touchstart", unlock, { once: true, passive: true });
+    }
   }
 }
 
 let engine: AudioEngine | null = null;
 
 export function getAudioEngine(): AudioEngine {
-  if (!engine) engine = new AudioEngine();
+  if (!engine) {
+    engine = new AudioEngine();
+    if (typeof window !== "undefined") {
+      engine.unlockAudio();
+    }
+  }
   return engine;
 }
