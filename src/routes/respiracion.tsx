@@ -55,11 +55,11 @@ function Respiracion() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl touch-lock">
       <AppHeader titulo="Respira" subtitulo={activo.descripcion} />
 
       <div className="px-5">
-        <div className="flex gap-2 overflow-x-auto pb-2">
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none" data-allow-scroll>
           {PROTOCOLS.map((prot) => (
             <button
               key={prot.id}
@@ -67,7 +67,7 @@ function Respiracion() {
               className={
                 "shrink-0 rounded-full border px-4 py-2 text-xs font-medium transition-colors " +
                 (activo.id === prot.id
-                  ? "border-primary bg-primary/15 text-primary"
+                  ? "border-primary bg-primary/15 text-primary shadow-sm"
                   : "border-border text-muted-foreground")
               }
             >
@@ -77,16 +77,16 @@ function Respiracion() {
         </div>
       </div>
 
-      <div className="mt-8 px-5">
+      <div className="mt-6 px-5">
         <BreathSession protocol={activo} onComplete={onComplete} />
       </div>
 
-      <div className="mt-10 px-5">
+      <div className="mt-8 px-5">
         <div className="surface-panel p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold">
             {activo.claim}
           </p>
-          <p className="mt-2 text-sm text-muted-foreground">{activo.descripcion}</p>
+          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{activo.descripcion}</p>
         </div>
       </div>
     </div>

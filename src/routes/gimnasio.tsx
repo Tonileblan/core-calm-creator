@@ -3,7 +3,19 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Brain, Flame, Loader2, Timer } from "lucide-react";
+import {
+  Brain,
+  Flame,
+  Loader2,
+  Timer,
+  Maximize2,
+  X,
+  Play,
+  Pause,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
@@ -15,6 +27,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getAudioEngine, type SoundId } from "@/lib/audio-engine";
 import { reencuadrarPensamiento } from "@/lib/wellness.functions";
 import { MindGames } from "@/components/MindGames";
+import { useScrollLock } from "@/hooks/useScrollLock";
 
 export const Route = createFileRoute("/gimnasio")({
   head: () => ({
@@ -68,7 +81,7 @@ function Gimnasio() {
   ).length;
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl touch-lock">
       <AppHeader titulo="Gimnasio mental" subtitulo="Foco profundo y reencuadre." />
 
       <div className="space-y-8 px-5">
@@ -152,6 +165,9 @@ function FocusTimer({
   const [bloque, setBloque] = useState(BLOQUES[0]!);
   const [segundos, setSegundos] = useState(BLOQUES[0]!.minutos * 60);
   const [corriendo, setCorriendo] = useState(false);
+  const [inmersivo, setInmersivo] = useState(false);
+
+  useScrollLock(inmersivo);
 
   useEffect(() => {
     setSegundos(bloque.minutos * 60);
@@ -184,50 +200,132 @@ function FocusTimer({
   };
 
   const pct = 100 - (segundos / (bloque.minutos * 60)) * 100;
+  const tiempoFormateado = `${String(Math.floor(segundos / 60)).padStart(2, "0")}:${String(segundos % 60).padStart(2, "0")}`;
 
   return (
-    <div className="surface-panel space-y-5 p-5">
-      <div className="flex flex-wrap gap-2">
-        {BLOQUES.map((b) => (
-          <button
-            key={b.label}
-            onClick={() => setBloque(b)}
-            className={
-              "rounded-full border px-3 py-1.5 text-xs transition-colors " +
-              (bloque.label === b.label
-                ? "border-primary bg-primary/15 text-primary"
-                : "border-border text-muted-foreground")
-            }
+    <>
+      <div className="surface-panel space-y-5 p-5 touch-lock">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-wrap gap-2">
+            {BLOQUES.map((b) => (
+              <button
+                key={b.label}
+                onClick={() => setBloque(b)}
+                className={
+                  "rounded-full border px-3 py-1.5 text-xs transition-colors " +
+                  (bloque.label === b.label
+                    ? "border-primary bg-primary/15 text-primary shadow-sm"
+                    : "border-border text-muted-foreground hover:border-primary/40")
+                }
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+            onClick={() => setInmersivo(true)}
+            title="Modo inmersivo"
           >
-            {b.label}
-          </button>
-        ))}
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <p className="text-center font-display text-6xl tabular-nums">{tiempoFormateado}</p>
+        <Progress value={pct} />
+        <div className="flex gap-2">
+          <Button className="flex-1 rounded-full shadow-md" onClick={toggle}>
+            {corriendo ? "Pausar bloque" : "Iniciar bloque"}
+          </Button>
+          <Button
+            variant="secondary"
+            className="rounded-full"
+            onClick={() => {
+              getAudioEngine().stop();
+              setCorriendo(false);
+              setSegundos(bloque.minutos * 60);
+            }}
+          >
+            Reiniciar
+          </Button>
+        </div>
+        <p className="text-[0.7rem] text-muted-foreground">
+          El audio de trabajo profundo ({bloque.sonido}) se sincroniza automáticamente con el bloque.
+        </p>
       </div>
-      <p className="text-center font-display text-6xl tabular-nums">
-        {String(Math.floor(segundos / 60)).padStart(2, "0")}:
-        {String(segundos % 60).padStart(2, "0")}
-      </p>
-      <Progress value={pct} />
-      <div className="flex gap-2">
-        <Button className="flex-1 rounded-full" onClick={toggle}>
-          {corriendo ? "Pausar bloque" : "Iniciar bloque"}
-        </Button>
-        <Button
-          variant="secondary"
-          className="rounded-full"
-          onClick={() => {
-            getAudioEngine().stop();
-            setCorriendo(false);
-            setSegundos(bloque.minutos * 60);
-          }}
+
+      {/* Modo reloj de foco inmersivo 100dvh */}
+      {inmersivo && (
+        <div
+          className="fixed inset-0 z-50 flex h-[100dvh] max-h-[100dvh] w-screen max-w-full flex-col justify-between bg-background/98 backdrop-blur-2xl px-6 py-6 touch-lock select-none overscroll-none overflow-hidden"
+          style={{ overscrollBehavior: "none" }}
         >
-          Reiniciar
-        </Button>
-      </div>
-      <p className="text-[0.7rem] text-muted-foreground">
-        El audio de trabajo profundo se activa automáticamente con el bloque.
-      </p>
-    </div>
+          {/* Header */}
+          <div className="mx-auto flex w-full max-w-md items-center justify-between pt-[env(safe-area-inset-top)]">
+            <div>
+              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-primary">
+                Bloque de enfoque
+              </p>
+              <h2 className="font-display text-lg text-foreground">{bloque.label}</h2>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
+              onClick={() => setInmersivo(false)}
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+
+          {/* Centered big clock */}
+          <div className="mx-auto my-auto flex flex-col items-center justify-center text-center">
+            <p className="font-display text-7xl sm:text-8xl tabular-nums text-foreground drop-shadow">
+              {tiempoFormateado}
+            </p>
+            <p className="mt-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              {corriendo ? `Enfoque activo (${bloque.sonido})` : "Pausado"}
+            </p>
+            <div className="mt-6 w-64 max-w-xs">
+              <Progress value={pct} />
+            </div>
+          </div>
+
+          {/* Bottom controls */}
+          <div className="mx-auto flex w-full max-w-md items-center justify-center gap-3 pb-[env(safe-area-inset-bottom)]">
+            <Button
+              variant="outline"
+              size="lg"
+              className="rounded-full flex-1 border-border/80"
+              onClick={() => {
+                getAudioEngine().stop();
+                setCorriendo(false);
+                setSegundos(bloque.minutos * 60);
+              }}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" /> Reiniciar
+            </Button>
+            <Button
+              size="lg"
+              className="rounded-full flex-1 shadow-lg bg-primary text-primary-foreground"
+              onClick={toggle}
+            >
+              {corriendo ? (
+                <>
+                  <Pause className="mr-2 h-4 w-4" /> Pausar
+                </>
+              ) : (
+                <>
+                  <Play className="mr-2 h-4 w-4" /> Iniciar
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

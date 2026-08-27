@@ -208,7 +208,7 @@ function Inicio() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl touch-lock">
       <AppHeader
         titulo="¿Qué necesitas ahora?"
         subtitulo="Alivio inmediato en un clic, o registra tu momento."

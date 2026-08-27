@@ -1,63 +1,197 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Brain, Grid3x3, Palette, Calculator, Eye, RotateCcw } from "lucide-react";
+import {
+  Brain,
+  Grid3x3,
+  Palette,
+  Calculator,
+  Eye,
+  RotateCcw,
+  Maximize2,
+  X,
+  Play,
+  Volume2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getAudioEngine } from "@/lib/audio-engine";
+import { useScrollLock } from "@/hooks/useScrollLock";
+import { cn } from "@/lib/utils";
 
 type Registrar = (ejercicio: string, minutos: number, detalle: Record<string, unknown>) => void;
 
 const JUEGOS = [
-  { id: "secuencia", label: "Secuencia", icon: Grid3x3, desc: "Memoria de trabajo" },
-  { id: "parejas", label: "Parejas", icon: Eye, desc: "Memoria visual" },
-  { id: "stroop", label: "Stroop", icon: Palette, desc: "Control inhibitorio" },
-  { id: "calculo", label: "Cálculo", icon: Calculator, desc: "Agilidad mental" },
+  { id: "secuencia", label: "Secuencia", icon: Grid3x3, desc: "Memoria de trabajo y patrones" },
+  { id: "parejas", label: "Parejas", icon: Eye, desc: "Memoria visual y retención espacial" },
+  { id: "stroop", label: "Stroop", icon: Palette, desc: "Control inhibitorio y atención selectiva" },
+  { id: "calculo", label: "Cálculo", icon: Calculator, desc: "Agilidad y flexibilidad mental" },
 ] as const;
 
 type JuegoId = (typeof JUEGOS)[number]["id"];
 
 export function MindGames({ registrar }: { registrar: Registrar }) {
   const [juego, setJuego] = useState<JuegoId>("secuencia");
+  const [inmersivo, setInmersivo] = useState(false);
+  const [juegoActivo, setJuegoActivo] = useState(false);
+
+  // Lock scrolling if immersive mode is active or an exercise is running
+  useScrollLock(inmersivo || juegoActivo);
+
+  const juegoActual = JUEGOS.find((j) => j.id === juego)!;
 
   return (
-    <div className="surface-panel space-y-5 p-5">
-      <div>
-        <h2 className="font-display text-xl">Ejercicios mentales</h2>
-        <p className="text-xs text-muted-foreground">
-          Entrenamientos visuales y breves: memoria, atención y agilidad.
-        </p>
+    <>
+      {/* Panel normal en el gimnasio */}
+      <div className="surface-panel space-y-5 p-5 touch-lock">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-display text-xl">Ejercicios mentales</h2>
+            <p className="text-xs text-muted-foreground">
+              Entrenamientos visuales y breves: memoria, atención y agilidad.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="rounded-full text-xs text-primary gap-1"
+            onClick={() => setInmersivo(true)}
+          >
+            <Maximize2 className="h-3.5 w-3.5" /> Pantalla completa
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2">
+          {JUEGOS.map((j) => {
+            const activo = j.id === juego;
+            return (
+              <button
+                key={j.id}
+                onClick={() => setJuego(j.id)}
+                className={
+                  "flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-center transition-colors " +
+                  (activo
+                    ? "border-primary bg-primary/15 text-primary shadow-sm"
+                    : "border-border text-muted-foreground hover:border-primary/40")
+                }
+              >
+                <j.icon className="h-4 w-4" />
+                <span className="text-[0.65rem] font-medium">{j.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="text-[0.7rem] text-muted-foreground">{juegoActual.desc}</p>
+
+        <div className="pt-1">
+          {juego === "secuencia" ? (
+            <Secuencia
+              registrar={registrar}
+              onActiveStateChange={setJuegoActivo}
+              onRequestFullscreen={() => setInmersivo(true)}
+            />
+          ) : null}
+          {juego === "parejas" ? (
+            <Parejas
+              registrar={registrar}
+              onActiveStateChange={setJuegoActivo}
+              onRequestFullscreen={() => setInmersivo(true)}
+            />
+          ) : null}
+          {juego === "stroop" ? (
+            <Stroop
+              registrar={registrar}
+              onActiveStateChange={setJuegoActivo}
+              onRequestFullscreen={() => setInmersivo(true)}
+            />
+          ) : null}
+          {juego === "calculo" ? (
+            <Calculo
+              registrar={registrar}
+              onActiveStateChange={setJuegoActivo}
+              onRequestFullscreen={() => setInmersivo(true)}
+            />
+          ) : null}
+        </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
-        {JUEGOS.map((j) => {
-          const activo = j.id === juego;
-          return (
+      {/* Modo inmersivo bloqueado 100dvh */}
+      {inmersivo && (
+        <div
+          className="fixed inset-0 z-50 flex h-[100dvh] max-h-[100dvh] w-screen max-w-full flex-col justify-between bg-background/98 backdrop-blur-2xl px-5 py-4 touch-lock select-none overscroll-none overflow-hidden"
+          style={{ overscrollBehavior: "none" }}
+        >
+          {/* Header inmersivo */}
+          <div className="mx-auto flex w-full max-w-md items-center justify-between pt-[env(safe-area-inset-top)]">
+            <div className="flex items-center gap-2">
+              <juegoActual.icon className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-primary">
+                  Gimnasio Mental
+                </p>
+                <h3 className="font-display text-base text-foreground">{juegoActual.label}</h3>
+              </div>
+            </div>
+
+            {/* Selector rápido entre juegos */}
+            <div className="flex items-center gap-1">
+              <div className="flex bg-secondary/80 rounded-full p-0.5 mr-2">
+                {JUEGOS.map((j) => (
+                  <button
+                    key={j.id}
+                    onClick={() => setJuego(j.id)}
+                    className={cn(
+                      "p-1.5 rounded-full text-xs transition-colors",
+                      juego === j.id
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "text-muted-foreground",
+                    )}
+                    title={j.label}
+                  >
+                    <j.icon className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setInmersivo(false)}
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Área central del juego */}
+          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-2">
+            {juego === "secuencia" ? (
+              <Secuencia registrar={registrar} onActiveStateChange={setJuegoActivo} isImmersive />
+            ) : null}
+            {juego === "parejas" ? (
+              <Parejas registrar={registrar} onActiveStateChange={setJuegoActivo} isImmersive />
+            ) : null}
+            {juego === "stroop" ? (
+              <Stroop registrar={registrar} onActiveStateChange={setJuegoActivo} isImmersive />
+            ) : null}
+            {juego === "calculo" ? (
+              <Calculo registrar={registrar} onActiveStateChange={setJuegoActivo} isImmersive />
+            ) : null}
+          </div>
+
+          {/* Footer inmersivo */}
+          <div className="mx-auto flex w-full max-w-md items-center justify-between pb-[env(safe-area-inset-bottom)] text-[0.7rem] text-muted-foreground">
+            <span>{juegoActual.desc}</span>
             <button
-              key={j.id}
-              onClick={() => setJuego(j.id)}
-              className={
-                "flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-center transition-colors " +
-                (activo
-                  ? "border-primary bg-primary/15 text-primary"
-                  : "border-border text-muted-foreground")
-              }
+              onClick={() => setInmersivo(false)}
+              className="text-primary underline cursor-pointer"
             >
-              <j.icon className="h-4 w-4" />
-              <span className="text-[0.65rem] font-medium">{j.label}</span>
+              Volver al gimnasio
             </button>
-          );
-        })}
-      </div>
-
-      <p className="text-[0.7rem] text-muted-foreground">
-        {JUEGOS.find((j) => j.id === juego)?.desc}
-      </p>
-
-      {juego === "secuencia" ? <Secuencia registrar={registrar} /> : null}
-      {juego === "parejas" ? <Parejas registrar={registrar} /> : null}
-      {juego === "stroop" ? <Stroop registrar={registrar} /> : null}
-      {juego === "calculo" ? <Calculo registrar={registrar} /> : null}
-    </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -66,7 +200,7 @@ function Marcador({ items }: { items: [string, string][] }) {
     <div className="flex justify-center gap-6">
       {items.map(([label, value]) => (
         <div key={label} className="text-center">
-          <p className="font-display text-2xl tabular-nums">{value}</p>
+          <p className="font-display text-2xl tabular-nums text-foreground">{value}</p>
           <p className="text-[0.6rem] uppercase tracking-wide text-muted-foreground">{label}</p>
         </div>
       ))}
@@ -77,13 +211,23 @@ function Marcador({ items }: { items: [string, string][] }) {
 /* ── 1. Secuencia (Simon) ───────────────────────────────── */
 
 const CELDAS = [
-  { bg: "bg-primary/70", on: "bg-primary", tono: 523 },
-  { bg: "bg-accent/60", on: "bg-accent", tono: 659 },
-  { bg: "bg-secondary", on: "bg-primary/60", tono: 784 },
-  { bg: "bg-muted", on: "bg-accent/80", tono: 880 },
+  { bg: "bg-primary/70", on: "bg-primary shadow-glow", tono: 523 },
+  { bg: "bg-accent/60", on: "bg-accent shadow-glow", tono: 659 },
+  { bg: "bg-secondary", on: "bg-primary/60 shadow-glow", tono: 784 },
+  { bg: "bg-muted", on: "bg-accent/80 shadow-glow", tono: 880 },
 ];
 
-function Secuencia({ registrar }: { registrar: Registrar }) {
+function Secuencia({
+  registrar,
+  onActiveStateChange,
+  isImmersive,
+  onRequestFullscreen,
+}: {
+  registrar: Registrar;
+  onActiveStateChange?: (active: boolean) => void;
+  isImmersive?: boolean;
+  onRequestFullscreen?: () => void;
+}) {
   const [seq, setSeq] = useState<number[]>([]);
   const [paso, setPaso] = useState(0);
   const [activa, setActiva] = useState<number | null>(null);
@@ -96,6 +240,10 @@ function Secuencia({ registrar }: { registrar: Registrar }) {
     timers.current = [];
   };
   useEffect(() => limpiar, []);
+
+  useEffect(() => {
+    onActiveStateChange?.(fase === "ver" || fase === "jugar");
+  }, [fase, onActiveStateChange]);
 
   const mostrar = useCallback((s: number[]) => {
     setFase("ver");
@@ -144,45 +292,48 @@ function Secuencia({ registrar }: { registrar: Registrar }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 touch-lock select-none">
       <Marcador
         items={[
           ["Nivel", String(seq.length)],
           ["Mejor", String(mejor)],
+          ["Fase", fase === "ver" ? "Observa" : fase === "jugar" ? "Tu turno" : "Listo"],
         ]}
       />
-      <div className="grid grid-cols-2 gap-3">
+      <div className={cn("grid grid-cols-2 gap-3 mx-auto w-full", isImmersive ? "max-w-xs" : "")}>
         {CELDAS.map((c, i) => (
           <button
             key={i}
             onClick={() => pulsar(i)}
             disabled={fase !== "jugar"}
             className={
-              "aspect-square rounded-3xl border border-border/60 transition-all duration-150 " +
-              (activa === i ? `${c.on} scale-95 shadow-lg` : c.bg) +
-              (fase === "jugar" ? " cursor-pointer" : " opacity-80")
+              "aspect-square rounded-3xl border border-border/60 transition-all duration-150 active:scale-95 " +
+              (activa === i ? `${c.on} scale-95 ring-2 ring-primary` : c.bg) +
+              (fase === "jugar" ? " cursor-pointer" : " opacity-80 cursor-default")
             }
           />
         ))}
       </div>
       {fase === "fin" ? (
-        <p className="text-center text-sm text-muted-foreground">
-          Fallaste en el nivel {seq.length}. Buen intento.
+        <p className="text-center text-sm text-muted-foreground font-medium">
+          Fallaste en el nivel {seq.length}. ¡Buen intento!
         </p>
       ) : null}
-      <Button
-        className="w-full rounded-full"
-        variant={fase === "idle" || fase === "fin" ? "default" : "secondary"}
-        onClick={() => {
-          setMejor((m) => Math.max(m, 0));
-          setSeq([]);
-          siguienteRonda([]);
-        }}
-      >
-        {fase === "idle" ? "Empezar" : fase === "fin" ? "Reintentar" : "Reiniciar"}
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          className="flex-1 rounded-full shadow-md"
+          variant={fase === "idle" || fase === "fin" ? "default" : "secondary"}
+          onClick={() => {
+            setMejor((m) => Math.max(m, 0));
+            setSeq([]);
+            siguienteRonda([]);
+          }}
+        >
+          {fase === "idle" ? "Empezar" : fase === "fin" ? "Reintentar" : "Reiniciar"}
+        </Button>
+      </div>
       <p className="text-center text-[0.7rem] text-muted-foreground">
-        Observa la secuencia y repítela en el mismo orden.
+        Observa la secuencia luminosa y repítela en el mismo orden.
       </p>
     </div>
   );
@@ -200,7 +351,17 @@ function nuevoTablero(pares: number) {
     .map((c, i) => ({ id: i, v: c.v }));
 }
 
-function Parejas({ registrar }: { registrar: Registrar }) {
+function Parejas({
+  registrar,
+  onActiveStateChange,
+  isImmersive,
+  onRequestFullscreen,
+}: {
+  registrar: Registrar;
+  onActiveStateChange?: (active: boolean) => void;
+  isImmersive?: boolean;
+  onRequestFullscreen?: () => void;
+}) {
   const [pares] = useState(6);
   const [cartas, setCartas] = useState(() => nuevoTablero(pares));
   const [abiertas, setAbiertas] = useState<number[]>([]);
@@ -208,6 +369,10 @@ function Parejas({ registrar }: { registrar: Registrar }) {
   const [movs, setMovs] = useState(0);
 
   const completo = hechas.length === cartas.length;
+
+  useEffect(() => {
+    onActiveStateChange?.(movs > 0 && !completo);
+  }, [movs, completo, onActiveStateChange]);
 
   useEffect(() => {
     if (completo && cartas.length) {
@@ -245,14 +410,19 @@ function Parejas({ registrar }: { registrar: Registrar }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 touch-lock select-none">
       <Marcador
         items={[
           ["Movimientos", String(movs)],
           ["Pares", `${hechas.length / 2}/${pares}`],
         ]}
       />
-      <div className="grid grid-cols-4 gap-2">
+      <div
+        className={cn(
+          "grid grid-cols-4 gap-2 mx-auto w-full",
+          isImmersive ? "max-w-sm" : "",
+        )}
+      >
         {cartas.map((c) => {
           const visible = abiertas.includes(c.id) || hechas.includes(c.id);
           return (
@@ -260,10 +430,10 @@ function Parejas({ registrar }: { registrar: Registrar }) {
               key={c.id}
               onClick={() => voltear(c.id)}
               className={
-                "flex aspect-square items-center justify-center rounded-2xl border text-5xl transition-all duration-200 " +
+                "flex aspect-square items-center justify-center rounded-2xl border text-3xl sm:text-4xl transition-all duration-200 active:scale-95 " +
                 (visible
-                  ? "border-primary/50 bg-primary/10"
-                  : "border-border bg-secondary text-transparent")
+                  ? "border-primary/50 bg-primary/15 shadow-sm"
+                  : "border-border bg-secondary text-transparent hover:border-primary/30")
               }
             >
               <span className={visible ? "" : "opacity-0"}>{c.v}</span>
@@ -272,7 +442,7 @@ function Parejas({ registrar }: { registrar: Registrar }) {
         })}
       </div>
       {completo ? (
-        <p className="text-center text-sm text-primary">
+        <p className="text-center text-sm font-medium text-primary">
           ¡Completado en {movs} movimientos!
         </p>
       ) : null}
@@ -289,10 +459,10 @@ function Parejas({ registrar }: { registrar: Registrar }) {
 /* ── 3. Stroop ──────────────────────────────────────────── */
 
 const COLORES = [
-  { nombre: "ROJO", clase: "text-[oklch(0.65_0.2_25)]" },
-  { nombre: "VERDE", clase: "text-[oklch(0.7_0.16_150)]" },
-  { nombre: "AZUL", clase: "text-[oklch(0.66_0.16_255)]" },
-  { nombre: "AMARILLO", clase: "text-[oklch(0.82_0.15_95)]" },
+  { nombre: "ROJO", clase: "text-[oklch(0.65_0.2_25)]", bg: "hover:bg-[oklch(0.65_0.2_25/0.15)]" },
+  { nombre: "VERDE", clase: "text-[oklch(0.7_0.16_150)]", bg: "hover:bg-[oklch(0.7_0.16_150/0.15)]" },
+  { nombre: "AZUL", clase: "text-[oklch(0.66_0.16_255)]", bg: "hover:bg-[oklch(0.66_0.16_255/0.15)]" },
+  { nombre: "AMARILLO", clase: "text-[oklch(0.82_0.15_95)]", bg: "hover:bg-[oklch(0.82_0.15_95/0.15)]" },
 ];
 
 function rondaStroop() {
@@ -302,12 +472,26 @@ function rondaStroop() {
   return { palabra, tinta };
 }
 
-function Stroop({ registrar }: { registrar: Registrar }) {
+function Stroop({
+  registrar,
+  onActiveStateChange,
+  isImmersive,
+  onRequestFullscreen,
+}: {
+  registrar: Registrar;
+  onActiveStateChange?: (active: boolean) => void;
+  isImmersive?: boolean;
+  onRequestFullscreen?: () => void;
+}) {
   const [ronda, setRonda] = useState(rondaStroop);
   const [aciertos, setAciertos] = useState(0);
   const [fallos, setFallos] = useState(0);
   const [segundos, setSegundos] = useState(45);
   const [corriendo, setCorriendo] = useState(false);
+
+  useEffect(() => {
+    onActiveStateChange?.(corriendo);
+  }, [corriendo, onActiveStateChange]);
 
   useEffect(() => {
     if (!corriendo) return;
@@ -337,30 +521,30 @@ function Stroop({ registrar }: { registrar: Registrar }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 touch-lock select-none">
       <Marcador
         items={[
           ["Aciertos", String(aciertos)],
           ["Fallos", String(fallos)],
-          ["Tiempo", String(segundos)],
+          ["Tiempo", `${segundos}s`],
         ]}
       />
       <Progress value={(segundos / 45) * 100} />
-      <div className="flex h-28 items-center justify-center rounded-3xl border border-border bg-secondary/40">
-        <span className={`font-display text-4xl ${COLORES[ronda.tinta]!.clase}`}>
+      <div className="flex h-24 sm:h-28 items-center justify-center rounded-3xl border border-border bg-secondary/40">
+        <span className={`font-display text-4xl sm:text-5xl font-semibold ${COLORES[ronda.tinta]!.clase}`}>
           {COLORES[ronda.palabra]!.nombre}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2.5">
         {COLORES.map((c, i) => (
           <button
             key={c.nombre}
             onClick={() => responder(i)}
             disabled={!corriendo}
             className={
-              "rounded-2xl border border-border py-3 text-sm font-medium transition-colors " +
+              "rounded-2xl border border-border py-3.5 text-sm font-semibold transition-all active:scale-95 " +
               c.clase +
-              (corriendo ? " hover:bg-secondary" : " opacity-50")
+              (corriendo ? ` ${c.bg} cursor-pointer` : " opacity-50 cursor-default")
             }
           >
             {c.nombre}
@@ -368,7 +552,7 @@ function Stroop({ registrar }: { registrar: Registrar }) {
         ))}
       </div>
       <Button
-        className="w-full rounded-full"
+        className="w-full rounded-full shadow-md"
         onClick={() => {
           setAciertos(0);
           setFallos(0);
@@ -406,12 +590,26 @@ function nuevaOperacion() {
   };
 }
 
-function Calculo({ registrar }: { registrar: Registrar }) {
+function Calculo({
+  registrar,
+  onActiveStateChange,
+  isImmersive,
+  onRequestFullscreen,
+}: {
+  registrar: Registrar;
+  onActiveStateChange?: (active: boolean) => void;
+  isImmersive?: boolean;
+  onRequestFullscreen?: () => void;
+}) {
   const [op, setOp] = useState(nuevaOperacion);
   const [aciertos, setAciertos] = useState(0);
   const [fallos, setFallos] = useState(0);
   const [segundos, setSegundos] = useState(60);
   const [corriendo, setCorriendo] = useState(false);
+
+  useEffect(() => {
+    onActiveStateChange?.(corriendo);
+  }, [corriendo, onActiveStateChange]);
 
   useEffect(() => {
     if (!corriendo) return;
@@ -446,27 +644,29 @@ function Calculo({ registrar }: { registrar: Registrar }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 touch-lock select-none">
       <Marcador
         items={[
           ["Aciertos", String(aciertos)],
           ["Precisión", `${precision}%`],
-          ["Tiempo", String(segundos)],
+          ["Tiempo", `${segundos}s`],
         ]}
       />
       <Progress value={(segundos / 60) * 100} />
-      <div className="flex h-28 items-center justify-center rounded-3xl border border-border bg-secondary/40">
+      <div className="flex h-24 sm:h-28 items-center justify-center rounded-3xl border border-border bg-secondary/40">
         <span className="font-display text-4xl tabular-nums">{op.texto}</span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2.5">
         {op.opciones.map((v) => (
           <button
             key={v}
             onClick={() => responder(v)}
             disabled={!corriendo}
             className={
-              "rounded-2xl border border-border py-3 font-display text-lg tabular-nums transition-colors " +
-              (corriendo ? "hover:border-primary hover:bg-primary/10" : "opacity-50")
+              "rounded-2xl border border-border py-3.5 font-display text-xl tabular-nums transition-all active:scale-95 " +
+              (corriendo
+                ? "hover:border-primary hover:bg-primary/10 cursor-pointer"
+                : "opacity-50 cursor-default")
             }
           >
             {v}
@@ -474,7 +674,7 @@ function Calculo({ registrar }: { registrar: Registrar }) {
         ))}
       </div>
       <Button
-        className="w-full rounded-full"
+        className="w-full rounded-full shadow-md"
         onClick={() => {
           setAciertos(0);
           setFallos(0);

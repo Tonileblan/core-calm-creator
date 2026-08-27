@@ -43,7 +43,7 @@ const CATEGORIAS = [
 
 function AudioPage() {
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-2xl touch-lock">
       <AppHeader titulo="Audio & Música" subtitulo="Frecuencias, ruido y tus anclas." />
       <div className="px-5">
         <Tabs defaultValue="frecuencias">
