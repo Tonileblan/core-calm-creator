@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AudioRouteImport } from './routes/audio'
+import { Route as GimnasioRouteImport } from './routes/gimnasio'
 import { Route as LaboratorioRouteImport } from './routes/laboratorio'
 import { Route as RespiracionRouteImport } from './routes/respiracion'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const AudioRoute = AudioRouteImport.update({
   id: '/audio',
   path: '/audio',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GimnasioRoute = GimnasioRouteImport.update({
+  id: '/gimnasio',
+  path: '/gimnasio',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LaboratorioRoute = LaboratorioRouteImport.update({
@@ -38,12 +44,14 @@ const RespiracionRoute = RespiracionRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
@@ -51,20 +59,23 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/audio': typeof AudioRoute
+  '/gimnasio': typeof GimnasioRoute
   '/laboratorio': typeof LaboratorioRoute
   '/respiracion': typeof RespiracionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/audio' | '/laboratorio' | '/respiracion'
+  fullPaths: '/' | '/audio' | '/gimnasio' | '/laboratorio' | '/respiracion'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/audio' | '/laboratorio' | '/respiracion'
-  id: '__root__' | '/' | '/audio' | '/laboratorio' | '/respiracion'
+  to: '/' | '/audio' | '/gimnasio' | '/laboratorio' | '/respiracion'
+  id:
+    '__root__' | '/' | '/audio' | '/gimnasio' | '/laboratorio' | '/respiracion'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AudioRoute: typeof AudioRoute
+  GimnasioRoute: typeof GimnasioRoute
   LaboratorioRoute: typeof LaboratorioRoute
   RespiracionRoute: typeof RespiracionRoute
 }
@@ -83,6 +94,13 @@ declare module '@tanstack/react-router' {
       path: '/audio'
       fullPath: '/audio'
       preLoaderRoute: typeof AudioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/gimnasio': {
+      id: '/gimnasio'
+      path: '/gimnasio'
+      fullPath: '/gimnasio'
+      preLoaderRoute: typeof GimnasioRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/laboratorio': {
@@ -105,6 +123,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AudioRoute: AudioRoute,
+  GimnasioRoute: GimnasioRoute,
   LaboratorioRoute: LaboratorioRoute,
   RespiracionRoute: RespiracionRoute,
 }
