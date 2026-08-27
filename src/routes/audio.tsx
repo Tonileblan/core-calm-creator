@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -29,9 +30,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { SOUND_PRESETS, getAudioEngine, type SoundId } from "@/lib/audio-engine";
-import { isYouTubeUrl } from "@/lib/youtube-audio";
+import { extractYouTubeVideoId, isYouTubeUrl } from "@/lib/youtube-audio";
+import { procesarCancionServerFn } from "@/lib/soundtrack.functions";
 import {
-  procesarYGuardarCancion,
+  uploadAudioToSupabase,
   eliminarCancionDeSupabase,
 } from "@/lib/supabase-soundtrack";
 import { cn } from "@/lib/utils";
@@ -211,6 +213,8 @@ type TrackActivo = {
 function BandaSonora() {
   const { user, signedIn } = useAuth();
   const queryClient = useQueryClient();
+  const procesar = useServerFn(procesarCancionServerFn);
+
   const [categoria, setCategoria] = useState<string>("celebrar");
   const [nombre, setNombre] = useState("");
   const [artista, setArtista] = useState("");
@@ -218,17 +222,30 @@ function BandaSonora() {
   const [archivoAudio, setArchivoAudio] = useState<File | null>(null);
   const [progresoEstado, setProgresoEstado] = useState<string | null>(null);
 
-  // Estado del reproductor integrado
+  // Estado del reproductor integrado universal
   const [trackActivo, setTrackActivo] = useState<TrackActivo | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ytPlayerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isYoutube = isYouTubeUrl(url);
+
+  // Carga del script oficial de YouTube Iframe API para reproducción integrada en background
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (!(window as any).YT) {
+        const tag = document.createElement("script");
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(tag);
+      }
+    }
+  }, []);
 
   const { data: canciones = [] } = useQuery({
     queryKey: ["soundtrack", user?.id],
@@ -250,15 +267,29 @@ function BandaSonora() {
         throw new Error("Pega un enlace de YouTube o selecciona un archivo de audio.");
       }
 
-      setProgresoEstado("Iniciando procesamiento...");
-      await procesarYGuardarCancion({
-        userId: user.id,
-        nombre: nombre.trim(),
-        artista: artista.trim() || undefined,
-        categoria,
-        urlOrFile: archivoAudio || url.trim(),
-        onProgress: (status) => setProgresoEstado(status),
-      });
+      if (archivoAudio) {
+        setProgresoEstado("Subiendo archivo local a Supabase Storage...");
+        const publicUrl = await uploadAudioToSupabase(user.id, archivoAudio, archivoAudio.name);
+        const songTitle = nombre.trim() || archivoAudio.name.replace(/\.[^/.]+$/, "");
+        const { error } = await supabase.from("vital_soundtrack").insert({
+          user_id: user.id,
+          nombre_cancion: songTitle,
+          artista: artista.trim() || null,
+          categoria_momento: categoria,
+          url_enlace: publicUrl,
+        });
+        if (error) throw error;
+      } else {
+        setProgresoEstado("Descargando video/audio y guardando en Supabase...");
+        await procesar({
+          data: {
+            nombre: nombre.trim() || undefined,
+            artista: artista.trim() || undefined,
+            categoria,
+            url: url.trim(),
+          },
+        });
+      }
     },
     onSuccess: () => {
       setNombre("");
@@ -267,7 +298,7 @@ function BandaSonora() {
       setArchivoAudio(null);
       setProgresoEstado(null);
       void queryClient.invalidateQueries({ queryKey: ["soundtrack"] });
-      toast.success("Canción guardada en Supabase");
+      toast.success("Canción guardada y lista para reproducir");
     },
     onError: (e: Error) => {
       setProgresoEstado(null);
@@ -278,12 +309,7 @@ function BandaSonora() {
   const del = useMutation({
     mutationFn: async (cancion: { id: string; url_enlace: string }) => {
       if (trackActivo?.id === cancion.id) {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = "";
-        }
-        setTrackActivo(null);
-        setIsPlaying(false);
+        detenerReproduccion();
       }
       await eliminarCancionDeSupabase(cancion.id, cancion.url_enlace);
     },
@@ -294,19 +320,45 @@ function BandaSonora() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Manejo de reproducción de audio nativo
+  const detenerReproduccion = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
+    if (ytPlayerRef.current?.pauseVideo) {
+      ytPlayerRef.current.pauseVideo();
+    }
+    setTrackActivo(null);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  };
+
+  // Reproducción universal: reproduce directamente archivo Supabase o YouTube en segundo plano
   const playTrack = (s: { id: string; nombre_cancion: string; artista: string | null; categoria_momento: string; url_enlace: string }) => {
-    if (trackActivo?.id === s.id) {
+    const isThisActive = trackActivo?.id === s.id;
+    const ytId = extractYouTubeVideoId(s.url_enlace);
+
+    if (isThisActive) {
       if (isPlaying) {
-        audioRef.current?.pause();
+        if (ytId && ytPlayerRef.current?.pauseVideo) {
+          ytPlayerRef.current.pauseVideo();
+        } else if (audioRef.current) {
+          audioRef.current.pause();
+        }
         setIsPlaying(false);
       } else {
-        audioRef.current?.play().catch(() => toast.error("Error al reproducir audio"));
+        if (ytId && ytPlayerRef.current?.playVideo) {
+          ytPlayerRef.current.playVideo();
+        } else if (audioRef.current) {
+          audioRef.current.play().catch(() => toast.error("Error al reproducir audio"));
+        }
         setIsPlaying(true);
       }
       return;
     }
 
+    // Nuevo track seleccionado
     setTrackActivo({
       id: s.id,
       nombre: s.nombre_cancion,
@@ -315,29 +367,120 @@ function BandaSonora() {
       categoria: s.categoria_momento,
     });
     setCurrentTime(0);
-    setIsPlaying(true);
+    setDuration(0);
 
-    if (audioRef.current) {
-      audioRef.current.src = s.url_enlace;
-      audioRef.current.play().catch(() => {
-        toast.error("No se pudo reproducir el archivo de audio.");
-        setIsPlaying(false);
-      });
+    if (ytId) {
+      // Reproducir vía YouTube API
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+
+      if ((window as any).YT && (window as any).YT.Player) {
+        if (!ytPlayerRef.current) {
+          ytPlayerRef.current = new (window as any).YT.Player("flowmind-yt-audio-container", {
+            height: "1",
+            width: "1",
+            videoId: ytId,
+            playerVars: {
+              autoplay: 1,
+              controls: 0,
+              disablekb: 1,
+              fs: 0,
+              playsinline: 1,
+            },
+            events: {
+              onReady: (event: any) => {
+                event.target.setVolume(volume * 100);
+                event.target.playVideo();
+                setIsPlaying(true);
+              },
+              onStateChange: (event: any) => {
+                if (event.data === 1) setIsPlaying(true);
+                else if (event.data === 2 || event.data === 0) setIsPlaying(false);
+              },
+            },
+          });
+        } else {
+          ytPlayerRef.current.loadVideoById(ytId);
+          ytPlayerRef.current.setVolume(volume * 100);
+          ytPlayerRef.current.playVideo();
+          setIsPlaying(true);
+        }
+      } else {
+        toast.info("Iniciando reproductor...", { description: s.nombre_cancion });
+      }
+    } else {
+      // Reproducir vía HTML5 Audio nativo (Supabase storage / archivo local)
+      if (ytPlayerRef.current?.pauseVideo) {
+        ytPlayerRef.current.pauseVideo();
+      }
+
+      if (audioRef.current) {
+        audioRef.current.src = s.url_enlace;
+        audioRef.current.volume = isMuted ? 0 : volume;
+        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+          toast.error("Error al reproducir el archivo de audio.");
+          setIsPlaying(false);
+        });
+      }
     }
   };
 
+  // Sincronización continua de tiempo de reproducción
+  useEffect(() => {
+    if (!isPlaying) return;
+    const interval = window.setInterval(() => {
+      const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
+      if (ytId && ytPlayerRef.current?.getCurrentTime) {
+        const cur = ytPlayerRef.current.getCurrentTime() || 0;
+        const dur = ytPlayerRef.current.getDuration() || 0;
+        setCurrentTime(cur);
+        if (dur > 0) setDuration(dur);
+      } else if (audioRef.current) {
+        setCurrentTime(audioRef.current.currentTime || 0);
+        if (audioRef.current.duration) setDuration(audioRef.current.duration);
+      }
+    }, 300);
+    return () => window.clearInterval(interval);
+  }, [isPlaying, trackActivo]);
+
   const seek = (seconds: number) => {
-    if (audioRef.current) {
+    const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
+    if (ytId && ytPlayerRef.current?.seekTo) {
+      ytPlayerRef.current.seekTo(seconds, true);
+      setCurrentTime(seconds);
+    } else if (audioRef.current) {
       audioRef.current.currentTime = seconds;
       setCurrentTime(seconds);
     }
   };
 
   const skipTime = (delta: number) => {
+    const newTime = Math.max(0, Math.min(duration, currentTime + delta));
+    seek(newTime);
+  };
+
+  const changeVolume = (v: number) => {
+    setVolume(v);
+    setIsMuted(false);
     if (audioRef.current) {
-      const newTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + delta));
-      audioRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
+      audioRef.current.volume = v;
+      audioRef.current.muted = false;
+    }
+    if (ytPlayerRef.current?.setVolume) {
+      ytPlayerRef.current.setVolume(v * 100);
+      ytPlayerRef.current.unMute();
+    }
+  };
+
+  const toggleMute = () => {
+    const newMute = !isMuted;
+    setIsMuted(newMute);
+    if (audioRef.current) audioRef.current.muted = newMute;
+    if (ytPlayerRef.current) {
+      if (newMute) ytPlayerRef.current.mute();
+      else ytPlayerRef.current.unMute();
     }
   };
 
@@ -361,7 +504,7 @@ function BandaSonora() {
 
   return (
     <div className="space-y-6">
-      {/* Elemento de audio HTML5 oculto para reproducción nativa */}
+      {/* Contenedores ocultos de audio nativo y YouTube iframe */}
       <audio
         ref={audioRef}
         onTimeUpdate={() => {
@@ -371,10 +514,9 @@ function BandaSonora() {
           if (audioRef.current) setDuration(audioRef.current.duration);
         }}
         onEnded={() => setIsPlaying(false)}
-        onError={() => {
-          setIsPlaying(false);
-        }}
+        onError={() => setIsPlaying(false)}
       />
+      <div id="flowmind-yt-audio-container" className="hidden pointer-events-none opacity-0 w-0 h-0 overflow-hidden" />
 
       {/* Formulario de adición */}
       <div className="surface-panel space-y-4 p-5">
@@ -399,7 +541,7 @@ function BandaSonora() {
           <Input
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
-            placeholder="Nombre de la canción (opcional si es YouTube)"
+            placeholder="Nombre de la canción (opcional si es enlace de YouTube)"
           />
           <Input
             value={artista}
@@ -412,7 +554,7 @@ function BandaSonora() {
               setUrl(e.target.value);
               if (e.target.value) setArchivoAudio(null);
             }}
-            placeholder="Enlace de YouTube (se descargará a Supabase) o Spotify"
+            placeholder="Enlace de YouTube o Spotify"
           />
         </div>
 
@@ -421,17 +563,17 @@ function BandaSonora() {
           <div className="flex items-center gap-2 rounded-2xl bg-primary/10 border border-primary/30 p-3 text-xs text-primary animate-in fade-in zoom-in-95 duration-200">
             <Sparkles className="h-4 w-4 shrink-0" />
             <span>
-              <strong>Enlace de YouTube detectado:</strong> Blowmind descargará la canción y la guardará en tu base de datos Supabase para reproducirla sin depender de YouTube.
+              <strong>Enlace de YouTube detectado:</strong> Blowmind descargará y guardará el video/audio en tu base de datos Supabase para reproducirlo sin depender de YouTube.
             </span>
           </div>
         )}
 
-        {/* Selector alternativo de archivo de audio local */}
+        {/* Selector alternativo de archivo local */}
         <div className="flex items-center justify-between pt-1">
           <input
             ref={fileInputRef}
             type="file"
-            accept="audio/*"
+            accept="audio/*,video/mp4"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -449,7 +591,7 @@ function BandaSonora() {
           >
             <Upload className="h-3.5 w-3.5" />
             <span>
-              {archivoAudio ? `Archivo: ${archivoAudio.name}` : "O sube un archivo de audio (MP3/M4A)"}
+              {archivoAudio ? `Archivo: ${archivoAudio.name}` : "O sube un archivo (MP3/MP4)"}
             </span>
           </button>
 
@@ -466,7 +608,7 @@ function BandaSonora() {
           )}
         </div>
 
-        {/* Estado de progreso durante descarga y subida */}
+        {/* Estado de progreso */}
         {progresoEstado && (
           <div className="flex items-center gap-2 rounded-2xl bg-secondary p-3 text-xs text-muted-foreground animate-pulse">
             <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
@@ -504,7 +646,7 @@ function BandaSonora() {
               {lista.map((s) => {
                 const isThisPlaying = trackActivo?.id === s.id && isPlaying;
                 const isThisActive = trackActivo?.id === s.id;
-                const isSupabaseHosted = s.url_enlace.includes("supabase.co") || s.url_enlace.startsWith("http");
+                const isSupabaseHosted = s.url_enlace.includes("supabase.co") || s.url_enlace.includes("/storage/v1/");
 
                 return (
                   <div
@@ -537,10 +679,14 @@ function BandaSonora() {
                         <p className={cn("truncate text-sm font-medium", isThisActive ? "text-primary font-semibold" : "")}>
                           {s.nombre_cancion}
                         </p>
-                        {isSupabaseHosted && (
-                          <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-secondary/80 text-muted-foreground shrink-0">
-                            <Cloud className="h-2.5 w-2.5 text-primary" />
+                        {isSupabaseHosted ? (
+                          <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary shrink-0 font-medium">
+                            <Cloud className="h-2.5 w-2.5" />
                             Supabase
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground shrink-0">
+                            Enlace
                           </span>
                         )}
                       </div>
@@ -599,14 +745,7 @@ function BandaSonora() {
 
             <div className="flex items-center gap-1">
               <button
-                onClick={() => {
-                  if (audioRef.current) {
-                    audioRef.current.pause();
-                    audioRef.current.src = "";
-                  }
-                  setTrackActivo(null);
-                  setIsPlaying(false);
-                }}
+                onClick={detenerReproduccion}
                 className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground cursor-pointer hover:bg-secondary"
               >
                 <X className="h-4 w-4" />
@@ -637,11 +776,7 @@ function BandaSonora() {
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    const newMute = !isMuted;
-                    setIsMuted(newMute);
-                    if (audioRef.current) audioRef.current.muted = newMute;
-                  }}
+                  onClick={toggleMute}
                   className="text-muted-foreground hover:text-foreground cursor-pointer p-1"
                 >
                   {isMuted || volume === 0 ? (
@@ -656,15 +791,7 @@ function BandaSonora() {
                   max={1}
                   step={0.05}
                   value={isMuted ? 0 : volume}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setVolume(v);
-                    setIsMuted(false);
-                    if (audioRef.current) {
-                      audioRef.current.volume = v;
-                      audioRef.current.muted = false;
-                    }
-                  }}
+                  onChange={(e) => changeVolume(Number(e.target.value))}
                   className="w-16 h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
                 />
               </div>
@@ -679,11 +806,20 @@ function BandaSonora() {
                 </button>
                 <button
                   onClick={() => {
+                    const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
                     if (isPlaying) {
-                      audioRef.current?.pause();
+                      if (ytId && ytPlayerRef.current?.pauseVideo) {
+                        ytPlayerRef.current.pauseVideo();
+                      } else if (audioRef.current) {
+                        audioRef.current.pause();
+                      }
                       setIsPlaying(false);
                     } else {
-                      audioRef.current?.play().catch(() => toast.error("Error al reproducir"));
+                      if (ytId && ytPlayerRef.current?.playVideo) {
+                        ytPlayerRef.current.playVideo();
+                      } else if (audioRef.current) {
+                        audioRef.current.play().catch(() => toast.error("Error al reproducir"));
+                      }
                       setIsPlaying(true);
                     }
                   }}
