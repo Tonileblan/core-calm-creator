@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { getAudioEngine, type SoundId } from "@/lib/audio-engine";
 import { reencuadrarPensamiento } from "@/lib/wellness.functions";
+import { MindGames } from "@/components/MindGames";
 
 export const Route = createFileRoute("/gimnasio")({
   head: () => ({
@@ -91,6 +92,22 @@ function Gimnasio() {
               detalle: { sonido },
             });
             void queryClient.invalidateQueries({ queryKey: ["gym"] });
+          }}
+        />
+
+        <MindGames
+          registrar={(ejercicio, minutos, detalle) => {
+            if (!user) return;
+            void supabase
+              .from("mental_gym_stats")
+              .insert({
+                user_id: user.id,
+                tipo_ejercicio: ejercicio,
+                duracion_minutos: minutos,
+                completado: true,
+                detalle: detalle as never,
+              })
+              .then(() => queryClient.invalidateQueries({ queryKey: ["gym"] }));
           }}
         />
 
