@@ -14,7 +14,195 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      alarms_settings: {
+        Row: {
+          accion_vinculada: string | null
+          activa: boolean
+          created_at: string
+          dias_semana: string[]
+          hora_programada: string
+          id: string
+          tipo_alarma: string
+          user_id: string
+        }
+        Insert: {
+          accion_vinculada?: string | null
+          activa?: boolean
+          created_at?: string
+          dias_semana?: string[]
+          hora_programada: string
+          id?: string
+          tipo_alarma: string
+          user_id: string
+        }
+        Update: {
+          accion_vinculada?: string | null
+          activa?: boolean
+          created_at?: string
+          dias_semana?: string[]
+          hora_programada?: string
+          id?: string
+          tipo_alarma?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      check_ins: {
+        Row: {
+          created_at: string
+          energia: number | null
+          estado_emocional: string
+          foco_dia: string | null
+          gratitud: string | null
+          id: string
+          notas: string | null
+          tipo_checkin: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          energia?: number | null
+          estado_emocional: string
+          foco_dia?: string | null
+          gratitud?: string | null
+          id?: string
+          notas?: string | null
+          tipo_checkin: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          energia?: number | null
+          estado_emocional?: string
+          foco_dia?: string | null
+          gratitud?: string | null
+          id?: string
+          notas?: string | null
+          tipo_checkin?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      mental_gym_stats: {
+        Row: {
+          completado: boolean
+          created_at: string
+          detalle: Json | null
+          duracion_minutos: number
+          id: string
+          tipo_ejercicio: string
+          user_id: string
+        }
+        Insert: {
+          completado?: boolean
+          created_at?: string
+          detalle?: Json | null
+          duracion_minutos?: number
+          id?: string
+          tipo_ejercicio: string
+          user_id: string
+        }
+        Update: {
+          completado?: boolean
+          created_at?: string
+          detalle?: Json | null
+          duracion_minutos?: number
+          id?: string
+          tipo_ejercicio?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+          voz_preferida: string | null
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id: string
+          updated_at?: string
+          voz_preferida?: string | null
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+          voz_preferida?: string | null
+        }
+        Relationships: []
+      }
+      saved_meditations: {
+        Row: {
+          audio_url: string | null
+          created_at: string
+          duracion_minutos: number
+          guion_texto: string | null
+          id: string
+          metodologia: string
+          objetivo: string | null
+          titulo: string
+          user_id: string
+        }
+        Insert: {
+          audio_url?: string | null
+          created_at?: string
+          duracion_minutos: number
+          guion_texto?: string | null
+          id?: string
+          metodologia: string
+          objetivo?: string | null
+          titulo: string
+          user_id: string
+        }
+        Update: {
+          audio_url?: string | null
+          created_at?: string
+          duracion_minutos?: number
+          guion_texto?: string | null
+          id?: string
+          metodologia?: string
+          objetivo?: string | null
+          titulo?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      vital_soundtrack: {
+        Row: {
+          artista: string | null
+          categoria_momento: string
+          created_at: string
+          id: string
+          nombre_cancion: string
+          url_enlace: string
+          user_id: string
+        }
+        Insert: {
+          artista?: string | null
+          categoria_momento: string
+          created_at?: string
+          id?: string
+          nombre_cancion: string
+          url_enlace: string
+          user_id: string
+        }
+        Update: {
+          artista?: string | null
+          categoria_momento?: string
+          created_at?: string
+          id?: string
+          nombre_cancion?: string
+          url_enlace?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
