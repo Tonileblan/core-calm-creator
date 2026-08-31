@@ -22,6 +22,8 @@ import {
   VolumeX,
   ChevronRight,
   GitFork,
+  Shuffle,
+  Zap,
 } from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
@@ -39,6 +41,7 @@ import {
   StroopGame,
   CalculoGame,
   TrenesGame,
+  CircuitoMental,
   type Registrar,
 } from "@/components/MindGames";
 import { useScrollLock } from "@/hooks/useScrollLock";
@@ -65,7 +68,7 @@ export const Route = createFileRoute("/gimnasio")({
 });
 
 type ActividadId =
-  "trenes" | "secuencia" | "parejas" | "stroop" | "calculo" | "foco" | "reencuadre";
+  "circuito" | "trenes" | "secuencia" | "parejas" | "stroop" | "calculo" | "foco" | "reencuadre";
 
 type ActividadDef = {
   id: ActividadId;
@@ -79,6 +82,16 @@ type ActividadDef = {
 };
 
 const ACTIVIDADES: ActividadDef[] = [
+  {
+    id: "circuito",
+    titulo: "Circuito Aleatorio",
+    subtitulo: "Recorrido de 3 desafíos cognitivos combinados",
+    tag: "Entrenamiento Diario",
+    icon: Shuffle,
+    colorClass: "text-amber-400",
+    bgClass: "bg-amber-500/15",
+    borderClass: "border-amber-500/30 hover:border-amber-400/60",
+  },
   {
     id: "trenes",
     titulo: "Cruce de Vías",
@@ -209,16 +222,40 @@ function Gimnasio() {
         <AppHeader titulo="Gimnasio mental" subtitulo="Elige una actividad independiente." />
 
         {/* Resumen de estadísticas */}
-        <div className="grid grid-cols-3 gap-3 mb-8">
+        <div className="grid grid-cols-3 gap-3 mb-6">
           <Stat label="Bloques hoy" value={String(bloquesHoy)} icon={Timer} />
           <Stat label="Minutos totales" value={String(minutosTotales)} icon={Flame} />
           <Stat label="Sesiones" value={String(stats.length)} icon={Brain} />
         </div>
 
+        {/* Hero Card: Circuito Diario Aleatorio */}
+        <div className="surface-panel p-5 mb-8 border-primary/40 bg-gradient-to-br from-primary/15 via-secondary/40 to-background shadow-lg relative overflow-hidden group">
+          <div className="absolute right-0 top-0 translate-x-3 -translate-y-3 h-32 w-32 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+          <div className="flex items-center justify-between gap-4 relative z-10">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/20 text-primary text-[0.68rem] font-bold tracking-wide uppercase">
+                <Zap className="h-3 w-3" /> Rutina Diaria
+              </div>
+              <h3 className="font-display text-lg font-bold text-foreground">
+                Circuito de 3 Juegos
+              </h3>
+              <p className="text-xs text-muted-foreground max-w-sm">
+                Recorrido aleatorio por 3 desafíos de agilidad, vías y memoria sin interrupciones.
+              </p>
+            </div>
+            <Button
+              onClick={() => setActividadActiva("circuito")}
+              className="rounded-full shadow-md px-5 h-11 font-semibold text-xs shrink-0 cursor-pointer"
+            >
+              <Play className="h-4 w-4 mr-1.5 fill-current" /> Iniciar
+            </Button>
+          </div>
+        </div>
+
         {/* Selector de Actividades Independientes */}
         <div className="space-y-3">
           <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground font-semibold px-1">
-            Actividades disponibles
+            Actividades individuales
           </p>
 
           <div className="grid gap-3">
@@ -300,6 +337,10 @@ function Gimnasio() {
 
           {/* Área interactiva central de la actividad */}
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-3 overflow-hidden">
+            {actividadActiva === "circuito" ? (
+              <CircuitoMental registrar={registrar} onFinalizar={() => setActividadActiva(null)} />
+            ) : null}
+
             {actividadActiva === "trenes" ? <TrenesGame registrar={registrar} /> : null}
 
             {actividadActiva === "parejas" ? <ParejasGame registrar={registrar} /> : null}

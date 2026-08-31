@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Heart, RotateCcw, Play, Pause, Award } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import {
+  Heart,
+  RotateCcw,
+  Play,
+  Pause,
+  Award,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { getAudioEngine } from "@/lib/audio-engine";
 import { cn } from "@/lib/utils";
 import type { Registrar } from "./MindGames";
@@ -84,7 +94,7 @@ export interface FloatingScore {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   CONFIGURACIONES DE DIFICULTAD
+   CONFIGURACIONES DE DIFICULTAD Y METAS FINITAS
 ───────────────────────────────────────────────────────────── */
 
 interface DifficultyConfig {
@@ -93,45 +103,50 @@ interface DifficultyConfig {
   colors: TrainColorId[];
   speedBase: number;
   spawnIntervalMs: number;
+  targetTrains: number; // Meta finita de trenes para completar el nivel
+  nextLevel?: DifficultyLevel;
 }
 
 const DIFICULTADES: Record<DifficultyLevel, DifficultyConfig> = {
   facil: {
-    name: "Fácil",
-    description: "2 estaciones · 2 desvíos",
+    name: "Nivel 1 · Fácil",
+    description: "2 estaciones · Guía 6 trenes a su estación",
     colors: ["verde", "azul"],
     speedBase: 0.14,
-    spawnIntervalMs: 5000,
+    spawnIntervalMs: 4600,
+    targetTrains: 6,
+    nextLevel: "medio",
   },
   medio: {
-    name: "Medio",
-    description: "3 estaciones · 3 desvíos",
+    name: "Nivel 2 · Medio",
+    description: "3 estaciones · Guía 8 trenes a mayor ritmo",
     colors: ["verde", "azul", "rosa"],
     speedBase: 0.17,
-    spawnIntervalMs: 4200,
+    spawnIntervalMs: 3900,
+    targetTrains: 8,
+    nextLevel: "dificil",
   },
   dificil: {
-    name: "Difícil",
-    description: "4 estaciones · 4 desvíos (Como captura)",
+    name: "Nivel 3 · Difícil",
+    description: "4 estaciones · Guía 10 trenes en red de 4 vías",
     colors: ["verde", "azul", "rosa", "amarillo"],
     speedBase: 0.2,
-    spawnIntervalMs: 3400,
+    spawnIntervalMs: 3300,
+    targetTrains: 10,
+    nextLevel: "experto",
   },
   experto: {
-    name: "Experto",
-    description: "5 estaciones · 5 desvíos · Red completa",
+    name: "Nivel 4 · Experto",
+    description: "5 estaciones · Guía 12 trenes en la red maestra",
     colors: ["verde", "azul", "rosa", "amarillo", "negro"],
     speedBase: 0.24,
     spawnIntervalMs: 2700,
+    targetTrains: 12,
   },
 };
 
 const VIEW_W = 400;
 const VIEW_H = 540;
-
-/* ─────────────────────────────────────────────────────────────
-   CÁLCULOS DE TRAYECTORIAS PARAMÉTRICAS BÉZIER
-───────────────────────────────────────────────────────────── */
 
 function bezier(p0: number, p1: number, p2: number, p3: number, t: number) {
   const cX = 3 * (p1 - p0);
@@ -161,7 +176,7 @@ function getPointOnCurve(
 }
 
 /* ─────────────────────────────────────────────────────────────
-   CÁLCULO DE POSICIÓN DEL TREN FÍSICAMENTE ALINEADO
+   CÁLCULO EXACTO DE TRAYECTORIA
 ───────────────────────────────────────────────────────────── */
 
 function calculateTrainPosition(
@@ -171,7 +186,7 @@ function calculateTrainPosition(
 ): { x: number; y: number; angle: number; destColor?: TrainColorId } {
   const p = Math.min(1, Math.max(0, train.progress));
 
-  // 1. MODO FÁCIL: S1 (250, 200) -> S3 (165, 95) -> Verde (95, 65) o Azul (95, 150)
+  // 1. MODO FÁCIL
   if (level === "facil") {
     const pS1 = 0.45;
     if (p <= pS1) {
@@ -197,7 +212,7 @@ function calculateTrainPosition(
     }
   }
 
-  // 2. MODO MEDIO: S0(250, 310) -> S1(250, 200) [Rosa(165, 220)] -> S3(165, 95) [Verde, Azul]
+  // 2. MODO MEDIO
   if (level === "medio") {
     const pS0 = 0.28;
     if (p <= pS0) {
@@ -214,13 +229,11 @@ function calculateTrainPosition(
     const r1 = train.routeS1 ?? switches[1] ?? 0;
 
     if (r1 === 1) {
-      // Rama a la Izquierda -> Casa Rosa (165, 220)
       const t = (p - pS1) / (1 - pS1);
       const pt = getPointOnCurve(250, 200, 250, 220, 200, 220, 165, 220, t);
       return { ...pt, destColor: "rosa" };
     }
 
-    // Sigue recto hacia S3 en (165, 95)
     const pS3 = 0.78;
     if (p <= pS3) {
       const t = (p - pS1) / (pS3 - pS1);
@@ -239,7 +252,7 @@ function calculateTrainPosition(
     }
   }
 
-  // 3. MODO DIFÍCIL & EXPERTO (Fiel a la captura Lumosity)
+  // 3. MODO DIFÍCIL & EXPERTO
   const pS0 = 0.28;
   if (p <= pS0) {
     const t = p / pS0;
@@ -248,14 +261,12 @@ function calculateTrainPosition(
 
   const r0 = train.routeS0 ?? switches[0] ?? 0;
 
-  // Si en S0 va a la DERECHA -> Casa Amarilla (290, 240)
   if (r0 === 1) {
     const t = (p - pS0) / (1 - pS0);
     const pt = getPointOnCurve(250, 310, 250, 290, 290, 280, 290, 240, t);
     return { ...pt, destColor: "amarillo" };
   }
 
-  // S0 sigue recto a S1 (250, 200)
   const pS1 = 0.5;
   if (p <= pS1) {
     const t = (p - pS0) / (pS1 - pS0);
@@ -264,7 +275,6 @@ function calculateTrainPosition(
 
   const r1 = train.routeS1 ?? switches[1] ?? 0;
 
-  // Si en S1 va a la IZQUIERDA -> Casa Rosa (165, 220) o S4 Negro
   if (r1 === 1) {
     const pRosa = 0.76;
     if (p <= pRosa) {
@@ -275,7 +285,6 @@ function calculateTrainPosition(
     if (level === "experto") {
       const r4 = train.routeS4 ?? switches[4] ?? 0;
       if (r4 === 1) {
-        // Hacia Casa Negra (95, 410)
         const t = (p - pRosa) / (1 - pRosa);
         const pt = getPointOnCurve(165, 220, 165, 300, 95, 340, 95, 410, t);
         return { ...pt, destColor: "negro" };
@@ -286,21 +295,18 @@ function calculateTrainPosition(
     return { ...pt, destColor: "rosa" };
   }
 
-  // S1 sigue recto a S2 (250, 95)
   const pS2 = 0.68;
   if (p <= pS2) {
     const t = (p - pS1) / (pS2 - pS1);
     return getPointOnCurve(250, 200, 250, 160, 250, 130, 250, 95, t);
   }
 
-  // S2 pasa a S3 (165, 95)
   const pS3 = 0.82;
   if (p <= pS3) {
     const t = (p - pS2) / (pS3 - pS2);
     return getPointOnCurve(250, 95, 230, 95, 190, 95, 165, 95, t);
   }
 
-  // S3 elige entre Verde (95, 65) y Azul (95, 150)
   const r3 = train.routeS3 ?? switches[3] ?? 0;
   const t = (p - pS3) / (1 - pS3);
 
@@ -332,7 +338,6 @@ function CasaSticker({
 
   return (
     <g transform={`translate(${x - 22}, ${y - 24})`} className="select-none pointer-events-none">
-      {/* Sombra suave de pegatina */}
       <rect
         x="2"
         y="4"
@@ -343,8 +348,6 @@ function CasaSticker({
         opacity="0.3"
         filter="blur(3px)"
       />
-
-      {/* Contorno Blanco Grueso (Sticker Style) */}
       <rect
         x="0"
         y="0"
@@ -356,8 +359,6 @@ function CasaSticker({
         strokeWidth="3.5"
         strokeLinejoin="round"
       />
-
-      {/* Cuerpo de la casa */}
       <rect
         x="3"
         y="12"
@@ -368,24 +369,14 @@ function CasaSticker({
         stroke={col.fillDark}
         strokeWidth="1.5"
       />
-
-      {/* Tejado de la estación */}
       <polygon points="3,14 22,2 41,14" fill={col.fillDark} stroke="#ffffff" strokeWidth="1" />
-
-      {/* Chimenea con banderita */}
       <rect x="31" y="2" width="6" height="8" fill={col.fillDark} rx="1" />
       <polygon points="34,2 38,0 34,-2" fill={col.accent} />
-
-      {/* Ventana iluminada / puerta */}
       <rect x="16" y="22" width="12" height="18" rx="3" fill="#ffffff" opacity="0.9" />
       <rect x="18" y="25" width="8" height="14" rx="2" fill={col.fillDark} opacity="0.85" />
       <line x1="22" y1="25" x2="22" y2="39" stroke="#ffffff" strokeWidth="1" />
-
-      {/* Ventana pequeña en buhardilla */}
       <circle cx="22" cy="10" r="3" fill="#ffffff" />
       <circle cx="22" cy="10" r="2" fill={col.fillDark} />
-
-      {/* Texto miniatura identificador */}
       <text
         x="22"
         y="42"
@@ -400,10 +391,6 @@ function CasaSticker({
     </g>
   );
 }
-
-/* ─────────────────────────────────────────────────────────────
-   COMPONENTE DE TREN DE VAPOR CON SILUETA Y BORDE BLANCO
-───────────────────────────────────────────────────────────── */
 
 function TrenVapor({
   x,
@@ -423,7 +410,6 @@ function TrenVapor({
       transform={`translate(${x}, ${y}) rotate(${angle + 90})`}
       className="select-none pointer-events-none"
     >
-      {/* Sombra de la locomotora */}
       <rect
         x="-11"
         y="-17"
@@ -434,8 +420,6 @@ function TrenVapor({
         opacity="0.35"
         filter="blur(2px)"
       />
-
-      {/* Borde exterior blanco sticker */}
       <rect
         x="-12"
         y="-18"
@@ -447,8 +431,6 @@ function TrenVapor({
         strokeWidth="3.5"
         strokeLinejoin="round"
       />
-
-      {/* Cuerpo principal de la locomotora */}
       <rect
         x="-10"
         y="-16"
@@ -459,32 +441,17 @@ function TrenVapor({
         stroke={col.fillDark}
         strokeWidth="1.5"
       />
-
-      {/* Cabina trasera */}
       <rect x="-9" y="2" width="18" height="12" rx="3" fill={col.fillDark} />
-      {/* Ventanilla de cabina */}
       <rect x="-6" y="5" width="12" height="6" rx="2" fill="#ffffff" />
-
-      {/* Chimenea de vapor delantera */}
       <circle cx="0" cy="-10" r="3.5" fill={col.fillDark} />
       <circle cx="0" cy="-10" r="2" fill="#ffffff" />
-
-      {/* Faro delantero luminoso */}
       <polygon points="-4,-16 0,-19 4,-16" fill="#ffffff" />
       <circle cx="0" cy="-16" r="2.5" fill="#fef08a" />
-
-      {/* Nube de vapor estilizada */}
       <circle cx="0" cy="18" r="3.5" fill="#ffffff" opacity="0.8" />
       <circle cx="3" cy="22" r="2.5" fill="#ffffff" opacity="0.5" />
     </g>
   );
 }
-
-/* ─────────────────────────────────────────────────────────────
-   PLATAFORMA CIRCULAR VERDE GIRATORIA (DESVÍO CONECTADO EXACTO)
-   - path0: Trazado SVG exacto que conecta la entrada con la salida 0
-   - path1: Trazado SVG exacto que conecta la entrada con la salida 1
-───────────────────────────────────────────────────────────── */
 
 function SwitchTurntable({
   x,
@@ -507,16 +474,9 @@ function SwitchTurntable({
       onClick={onClick}
       className="cursor-pointer group select-none"
     >
-      {/* Zona táctil grande para dedos en móvil */}
       <circle r="36" fill="transparent" />
-
-      {/* Sombra 3D de la plataforma circular */}
       <circle cx="0" cy="3" r="22" fill="#1a351f" opacity="0.6" />
-
-      {/* Base cilíndrica verde oscuro */}
       <circle r="22" fill="#3c7940" stroke="#27532a" strokeWidth="2.5" />
-
-      {/* Superficie superior verde brillante */}
       <circle
         r="19"
         fill="#529e55"
@@ -524,8 +484,6 @@ function SwitchTurntable({
         strokeWidth="1.2"
         className="transition-transform duration-200 group-hover:scale-105"
       />
-
-      {/* 1. Vía inactiva (Atenuada) */}
       <path
         d={state === 0 ? path1 : path0}
         fill="none"
@@ -534,8 +492,6 @@ function SwitchTurntable({
         strokeLinecap="round"
         opacity="0.5"
       />
-
-      {/* 2. Vía activa (Resaltada y físicamente conectada) */}
       <path
         d={state === 0 ? path0 : path1}
         fill="none"
@@ -544,8 +500,6 @@ function SwitchTurntable({
         strokeLinecap="round"
         className="transition-all duration-250 ease-out"
       />
-
-      {/* Riel metálico brillante en la vía activa */}
       <path
         d={state === 0 ? path0 : path1}
         fill="none"
@@ -554,11 +508,7 @@ function SwitchTurntable({
         strokeLinecap="round"
         className="transition-all duration-250 ease-out drop-shadow-[0_0_2px_rgba(255,255,255,0.8)]"
       />
-
-      {/* Perno central dorado */}
       <circle cx="0" cy="0" r="3.5" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />
-
-      {/* Anillo de feedback al pasar el ratón */}
       <circle
         r="23"
         fill="none"
@@ -572,28 +522,41 @@ function SwitchTurntable({
 }
 
 /* ─────────────────────────────────────────────────────────────
-   COMPONENTE PRINCIPAL
+   COMPONENTE PRINCIPAL CON NIVELES FINITOS Y CIRCUITO
 ───────────────────────────────────────────────────────────── */
 
-export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
-  const [dificultad, setDificultad] = useState<DifficultyLevel>("dificil");
-  const [fase, setFase] = useState<"idle" | "jugando" | "pausado" | "gameover">("idle");
+export function TrainSwitchGame({
+  registrar,
+  dificultadInicial = "facil",
+  onGameComplete,
+}: {
+  registrar: Registrar;
+  dificultadInicial?: DifficultyLevel;
+  onGameComplete?: (stats: { puntos: number; aciertos: number; tiempoSegundos: number }) => void;
+}) {
+  const [dificultad, setDificultad] = useState<DifficultyLevel>(dificultadInicial);
+  const [fase, setFase] = useState<
+    "idle" | "jugando" | "pausado" | "nivel_completado" | "victoria_total" | "gameover"
+  >("idle");
 
   const [puntos, setPuntos] = useState(0);
   const [racha, setRacha] = useState(0);
   const [mejorRacha, setMejorRacha] = useState(0);
-  const [aciertos, setAciertos] = useState(0);
+  const [aciertosNivel, setAciertosNivel] = useState(0);
+  const [totalAciertos, setTotalAciertos] = useState(0);
   const [fallos, setFallos] = useState(0);
   const [vidas, setVidas] = useState(3);
   const [segundos, setSegundos] = useState(0);
 
-  // Estados de los desvíos giratorios (0 o 1)
+  // Control de trenes generados en el nivel actual
+  const [trenesGenerados, setTrenesGenerados] = useState(0);
+
   const [switches, setSwitches] = useState<Record<number, 0 | 1>>({
-    0: 0, // S0 (Inferior): 0 = Recto Arriba, 1 = Derecha a Amarillo
-    1: 0, // S1 (Medio): 0 = Recto Arriba, 1 = Izquierda a Rosa
-    2: 0, // S2 (Superior): 0 = Izquierda a S3, 1 = Recto
-    3: 0, // S3 (Top-Left): 0 = Arriba a Verde, 1 = Abajo a Azul
-    4: 0, // S4 (Negro - Experto): 0 = Rosa, 1 = Negro
+    0: 0,
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
   });
 
   const [trains, setTrains] = useState<TrainItem[]>([]);
@@ -624,12 +587,13 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
       ...prev,
       [id]: prev[id] === 0 ? 1 : 0,
     }));
-    // Sonido táctil de giro mecánico
     getAudioEngine().chime(id === 0 ? 680 : id === 1 ? 780 : id === 2 ? 880 : 940, 0.08);
   };
 
-  /* ── Spawning de nuevo tren ── */
+  /* ── Spawning controlado de trenes (Hasta la meta del nivel) ── */
   const spawnTrain = useCallback(() => {
+    if (trenesGenerados >= config.targetTrains) return;
+
     const availableColors = config.colors;
     const randomColor = availableColors[Math.floor(Math.random() * availableColors.length)]!;
     const newTrain: TrainItem = {
@@ -639,25 +603,32 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
       speed: config.speedBase,
     };
     setTrains((prev) => [...prev, newTrain]);
-  }, [config]);
+    setTrenesGenerados((g) => g + 1);
+  }, [config, trenesGenerados]);
 
-  /* ── Iniciar Partida ── */
-  const iniciarJuego = (nivel = dificultad) => {
+  /* ── Iniciar Nivel o Partida ── */
+  const iniciarNivel = (nivel = dificultad) => {
     setDificultad(nivel);
-    setPuntos(0);
-    setRacha(0);
-    setMejorRacha(0);
-    setAciertos(0);
-    setFallos(0);
-    setVidas(3);
-    setSegundos(0);
+    setAciertosNivel(0);
+    setTrenesGenerados(0);
     setTrains([]);
     setFloatingScores([]);
     setSwitches({ 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 });
     setFase("jugando");
-    spawnTimerRef.current = Date.now() + 500;
+    spawnTimerRef.current = Date.now() + 600;
     lastTimeRef.current = performance.now();
     getAudioEngine().chime(587, 0.25);
+  };
+
+  const reiniciarCompleto = () => {
+    setPuntos(0);
+    setRacha(0);
+    setMejorRacha(0);
+    setTotalAciertos(0);
+    setFallos(0);
+    setVidas(3);
+    setSegundos(0);
+    iniciarNivel(dificultadInicial);
   };
 
   /* ── Manejo de llegada a la casita correspondiente ── */
@@ -667,16 +638,16 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
       const isSuccess = train.color === pos.destColor;
 
       if (isSuccess) {
-        setAciertos((a) => a + 1);
+        setAciertosNivel((a) => a + 1);
+        setTotalAciertos((t) => t + 1);
         setRacha((r) => {
           const nr = r + 1;
           setMejorRacha((m) => Math.max(m, nr));
           return nr;
         });
-        const pts = 100 + racha * 20;
+        const pts = 100 + racha * 25;
         setPuntos((p) => p + pts);
 
-        // Sonido de llegada triunfal
         getAudioEngine().chime(784, 0.12);
         window.setTimeout(() => getAudioEngine().chime(1046, 0.2), 80);
 
@@ -699,7 +670,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             registrar("atencion_trenes", Math.max(1, Math.round(segundos / 60)), {
               dificultad,
               puntos,
-              aciertos,
+              aciertos: totalAciertos,
               fallos: fallos + 1,
               mejorRacha,
             });
@@ -707,7 +678,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
           return Math.max(0, nv);
         });
 
-        // Sonido de error
         getAudioEngine().chime(220, 0.3);
 
         const scoreId = Math.random().toString();
@@ -720,8 +690,52 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
         }, 800);
       }
     },
-    [aciertos, dificultad, fallos, mejorRacha, puntos, racha, registrar, segundos],
+    [dificultad, fallos, mejorRacha, puntos, racha, registrar, segundos, totalAciertos],
   );
+
+  /* ── Comprobación de fin de nivel (cuando todos los trenes terminan) ── */
+  useEffect(() => {
+    if (fase === "jugando" && trenesGenerados >= config.targetTrains && trains.length === 0) {
+      // Nivel completado
+      const bonusNivel = 300 + vidas * 100;
+      setPuntos((p) => p + bonusNivel);
+      getAudioEngine().chime(880, 0.3);
+      window.setTimeout(() => getAudioEngine().chime(1175, 0.4), 150);
+
+      if (config.nextLevel) {
+        setFase("nivel_completado");
+      } else {
+        setFase("victoria_total");
+        registrar("atencion_trenes", Math.max(1, Math.round(segundos / 60)), {
+          dificultad: "victoria_completa",
+          puntos: puntos + bonusNivel,
+          aciertos: totalAciertos,
+          fallos,
+          mejorRacha,
+        });
+        if (onGameComplete) {
+          onGameComplete({
+            puntos: puntos + bonusNivel,
+            aciertos: totalAciertos,
+            tiempoSegundos: segundos,
+          });
+        }
+      }
+    }
+  }, [
+    fase,
+    trenesGenerados,
+    config,
+    trains.length,
+    vidas,
+    puntos,
+    totalAciertos,
+    fallos,
+    mejorRacha,
+    segundos,
+    registrar,
+    onGameComplete,
+  ]);
 
   /* ── Bucle de Animación a 60 FPS ── */
   useEffect(() => {
@@ -738,9 +752,9 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
       const dt = Math.min((time - lastTimeRef.current) / 1000, 0.1);
       lastTimeRef.current = time;
 
-      // Spawning periódico
+      // Spawning periódico si no se ha alcanzado la meta
       const now = Date.now();
-      if (now >= spawnTimerRef.current) {
+      if (now >= spawnTimerRef.current && trenesGenerados < config.targetTrains) {
         spawnTrain();
         spawnTimerRef.current = now + config.spawnIntervalMs;
       }
@@ -754,7 +768,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
           const nextP = tr.progress + tr.speed * dt;
           const updated = { ...tr, progress: nextP };
 
-          // Bloqueo de rutas al cruzar cada nodo
           if (dificultad === "facil") {
             if (nextP >= 0.45 && !tr.passedS1) {
               updated.passedS1 = true;
@@ -778,7 +791,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
               updated.routeS3 = currentSw[3];
             }
           } else {
-            // Difícil & Experto (Captura Lumosity)
             if (nextP >= 0.28 && !tr.passedS0) {
               updated.passedS0 = true;
               updated.routeS0 = currentSw[0];
@@ -819,7 +831,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
       isRunning = false;
       if (reqRef.current) cancelAnimationFrame(reqRef.current);
     };
-  }, [fase, config, spawnTrain, handleArrival, dificultad]);
+  }, [fase, config, spawnTrain, handleArrival, dificultad, trenesGenerados]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -829,77 +841,82 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
   return (
     <div className="flex flex-col items-center justify-between h-full w-full max-w-sm sm:max-w-md mx-auto py-1 touch-none select-none">
-      {/* ── HUD SUPERIOR ESTILO LUMOSITY ── */}
-      <div className="w-full flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 rounded-2xl border border-border/80 shadow-md">
-        <button
-          onClick={() =>
-            setFase((f) => (f === "jugando" ? "pausado" : f === "pausado" ? "jugando" : f))
-          }
-          className="flex h-8 w-8 items-center justify-center rounded-xl bg-zinc-800 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-        >
-          {fase === "pausado" ? (
-            <Play className="h-4 w-4 fill-current" />
-          ) : (
-            <Pause className="h-4 w-4 fill-current" />
-          )}
-        </button>
+      {/* ── HUD SUPERIOR ESTILO LUMOSITY CON META FINITA ── */}
+      <div className="w-full space-y-1">
+        <div className="w-full flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 rounded-2xl border border-border/80 shadow-md">
+          <button
+            onClick={() =>
+              setFase((f) => (f === "jugando" ? "pausado" : f === "pausado" ? "jugando" : f))
+            }
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-zinc-800 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+          >
+            {fase === "pausado" ? (
+              <Play className="h-4 w-4 fill-current" />
+            ) : (
+              <Pause className="h-4 w-4 fill-current" />
+            )}
+          </button>
 
-        <div className="flex items-center gap-4 text-xs font-mono">
-          <div className="text-center">
-            <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
-              Tiempo
-            </span>
-            <span className="font-bold text-foreground">{formatTime(segundos)}</span>
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <div className="text-center">
+              <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
+                Nivel
+              </span>
+              <span className="font-bold text-foreground capitalize">{dificultad}</span>
+            </div>
+
+            <div className="h-5 w-px bg-border/60" />
+
+            <div className="text-center">
+              <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
+                Meta Trenes
+              </span>
+              <span className="font-bold text-emerald-400">
+                {aciertosNivel} / {config.targetTrains}
+              </span>
+            </div>
+
+            <div className="h-5 w-px bg-border/60" />
+
+            <div className="text-center">
+              <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
+                Puntos
+              </span>
+              <span className="font-bold text-amber-400">{puntos}</span>
+            </div>
           </div>
 
-          <div className="h-5 w-px bg-border/60" />
-
-          <div className="text-center">
-            <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
-              Aciertos
-            </span>
-            <span className="font-bold text-emerald-400">
-              {aciertos} / {aciertos + fallos}
-            </span>
-          </div>
-
-          <div className="h-5 w-px bg-border/60" />
-
-          <div className="text-center">
-            <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground block font-sans">
-              Racha
-            </span>
-            <span className="font-bold text-amber-400">🔥 {racha}</span>
+          {/* Vidas */}
+          <div className="flex items-center gap-0.5">
+            {[1, 2, 3].map((heartIndex) => (
+              <Heart
+                key={heartIndex}
+                className={cn(
+                  "h-4 w-4 transition-transform",
+                  heartIndex <= vidas
+                    ? "text-rose-500 fill-rose-500"
+                    : "text-zinc-600 fill-zinc-800 opacity-40",
+                )}
+              />
+            ))}
           </div>
         </div>
 
-        {/* Vidas */}
-        <div className="flex items-center gap-0.5">
-          {[1, 2, 3].map((heartIndex) => (
-            <Heart
-              key={heartIndex}
-              className={cn(
-                "h-4 w-4 transition-transform",
-                heartIndex <= vidas
-                  ? "text-rose-500 fill-rose-500"
-                  : "text-zinc-600 fill-zinc-800 opacity-40",
-              )}
-            />
-          ))}
-        </div>
+        {/* Barra de progreso de la meta del nivel */}
+        <Progress
+          value={(aciertosNivel / config.targetTrains) * 100}
+          className="h-1.5 bg-zinc-800"
+        />
       </div>
 
-      {/* ── SELECTOR DE DIFICULTAD (PÍLDORAS) ── */}
+      {/* ── SELECTOR DE NIVEL RÁPIDO ── */}
       <div className="flex items-center justify-center gap-1 my-1 bg-zinc-900/60 p-1 rounded-full border border-border/50 w-full max-w-[340px]">
         {(["facil", "medio", "dificil", "experto"] as DifficultyLevel[]).map((lvl) => (
           <button
             key={lvl}
             onClick={() => {
-              if (fase === "jugando") {
-                iniciarJuego(lvl);
-              } else {
-                setDificultad(lvl);
-              }
+              setDificultad(lvl);
+              iniciarNivel(lvl);
             }}
             className={cn(
               "flex-1 text-[0.7rem] py-1 rounded-full font-medium transition-all cursor-pointer capitalize",
@@ -913,7 +930,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
         ))}
       </div>
 
-      {/* ── ESCENARIO COMPLETO (SVG 400x540) CON BOSQUE, MONTAÑAS Y VÍAS ── */}
+      {/* ── ESCENARIO SVG CON VÍAS Y PLATAFORMAS GIRATORIAS ── */}
       <div className="relative w-full max-w-[360px] aspect-[4/5.4] rounded-3xl border-2 border-border/90 bg-[#264e2d] shadow-2xl overflow-hidden my-auto flex items-center justify-center">
         <svg
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
@@ -921,7 +938,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
           preserveAspectRatio="xMidYMid meet"
         >
           <defs>
-            {/* Gradiente del Terreno de Bosque */}
             <radialGradient id="forest-ground" cx="50%" cy="50%" r="70%">
               <stop offset="0%" stopColor="#32633a" />
               <stop offset="60%" stopColor="#28522f" />
@@ -929,10 +945,9 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             </radialGradient>
           </defs>
 
-          {/* 1. Fondo de Terreno */}
           <rect width={VIEW_W} height={VIEW_H} fill="url(#forest-ground)" />
 
-          {/* Árboles y Pinos de Fondo Decorativos */}
+          {/* Pinos decorativos */}
           <g opacity="0.35" fill="#18361c">
             <polygon points="50,110 58,130 42,130" />
             <polygon points="40,240 48,260 32,260" />
@@ -943,12 +958,10 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             <polygon points="60,350 68,370 52,370" />
           </g>
 
-          {/* 2. Red de Vías de Ferrocarril (Doble Riel con Traviesas) */}
+          {/* Vías de tren fijas */}
           <g className="rails-group" fill="none" strokeLinecap="round">
-            {/* ── MODO FÁCIL: 2 Estaciones ── */}
             {dificultad === "facil" && (
               <>
-                {/* Origen a S1(250, 200) */}
                 <path d="M 250,480 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,480 L 250,220"
@@ -956,8 +969,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S1 a S3(165, 95) */}
                 <path d="M 250,180 C 250,140 210,95 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,180 C 250,140 210,95 185,95"
@@ -965,8 +976,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S3 a Verde(95, 65) */}
                 <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 145,85 C 130,80 115,65 95,65"
@@ -974,8 +983,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S3 a Azul(95, 150) */}
                 <path d="M 145,110 C 130,125 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 145,110 C 130,125 115,150 95,150"
@@ -986,10 +993,8 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
               </>
             )}
 
-            {/* ── MODO MEDIO: 3 Estaciones ── */}
             {dificultad === "medio" && (
               <>
-                {/* Origen a S0(250, 310) */}
                 <path d="M 250,480 L 250,330" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,480 L 250,330"
@@ -997,8 +1002,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S0 a S1(250, 200) */}
                 <path d="M 250,290 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,290 L 250,220"
@@ -1006,8 +1009,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S1 a Rosa(165, 220) */}
                 <path d="M 230,205 C 205,215 185,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 230,205 C 205,215 185,220 165,220"
@@ -1015,8 +1016,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S1 a S3(165, 95) */}
                 <path d="M 250,180 C 250,140 210,95 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,180 C 250,140 210,95 185,95"
@@ -1024,8 +1023,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* S3 a Verde(95, 65) y Azul(95, 150) */}
                 <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 145,85 C 130,80 115,65 95,65"
@@ -1043,10 +1040,8 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
               </>
             )}
 
-            {/* ── MODO DIFÍCIL & EXPERTO (Fiel a la captura Lumosity) ── */}
             {(dificultad === "dificil" || dificultad === "experto") && (
               <>
-                {/* Origen a S0(250, 310) */}
                 <path d="M 250,480 L 250,330" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,480 L 250,330"
@@ -1054,8 +1049,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S0 a Amarillo(290, 240) (Derecha) */}
                 <path d="M 270,305 C 280,300 290,280 290,240" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 270,305 C 280,300 290,280 290,240"
@@ -1063,8 +1056,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S0 a S1(250, 200) (Arriba) */}
                 <path d="M 250,290 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,290 L 250,220"
@@ -1072,8 +1063,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S1 a Rosa(165, 220) (Izquierda) */}
                 <path d="M 230,205 C 205,215 185,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 230,205 C 205,215 185,220 165,220"
@@ -1081,8 +1070,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S1 a S2(250, 95) (Arriba) */}
                 <path d="M 250,180 L 250,115" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 250,180 L 250,115"
@@ -1090,8 +1077,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S2 a S3(165, 95) (Izquierda) */}
                 <path d="M 230,95 L 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 230,95 L 185,95"
@@ -1099,8 +1084,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S3 a Verde(95, 65) */}
                 <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 145,85 C 130,80 115,65 95,65"
@@ -1108,8 +1091,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* De S3 a Azul(95, 150) */}
                 <path d="M 145,110 C 130,125 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
                 <path
                   d="M 145,110 C 130,125 115,150 95,150"
@@ -1117,8 +1098,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-
-                {/* Modo Experto: Vía hacia Casa Negra */}
                 {dificultad === "experto" && (
                   <>
                     <path d="M 145,305 C 125,320 95,350 95,410" stroke="#1a2b1c" strokeWidth="9" />
@@ -1134,10 +1113,9 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             )}
           </g>
 
-          {/* 3. Plataformas Circulares Verdes (Desvíos con Trazados Físicos Conectados) */}
+          {/* Desvíos giratorios */}
           {dificultad === "facil" && (
             <>
-              {/* S1: Recto/Curva hacia S3 */}
               <SwitchTurntable
                 x={250}
                 y={200}
@@ -1146,7 +1124,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 C 0,5 -5,-10 -20,-20"
                 onClick={() => toggleSwitch(1)}
               />
-              {/* S3: Arriba a Verde vs Abajo a Azul */}
               <SwitchTurntable
                 x={165}
                 y={95}
@@ -1160,7 +1137,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
           {dificultad === "medio" && (
             <>
-              {/* S0: Recto hacia S1 */}
               <SwitchTurntable
                 x={250}
                 y={310}
@@ -1169,7 +1145,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 L 0,-20"
                 onClick={() => toggleSwitch(0)}
               />
-              {/* S1: Recto Arriba (0) vs Giro Izquierda a Rosa (1) */}
               <SwitchTurntable
                 x={250}
                 y={200}
@@ -1178,7 +1153,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 C 0,5 -8,5 -20,5"
                 onClick={() => toggleSwitch(1)}
               />
-              {/* S3: Arriba a Verde (0) vs Abajo a Azul (1) */}
               <SwitchTurntable
                 x={165}
                 y={95}
@@ -1192,7 +1166,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
           {(dificultad === "dificil" || dificultad === "experto") && (
             <>
-              {/* S0: Recto Arriba hacia S1 (0) vs Giro Derecha a Amarillo (1) */}
               <SwitchTurntable
                 x={250}
                 y={310}
@@ -1201,8 +1174,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 C 0,5 8,-2 20,-5"
                 onClick={() => toggleSwitch(0)}
               />
-
-              {/* S1: Recto Arriba hacia S2 (0) vs Giro Izquierda a Rosa (1) */}
               <SwitchTurntable
                 x={250}
                 y={200}
@@ -1211,8 +1182,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 C 0,5 -8,5 -20,5"
                 onClick={() => toggleSwitch(1)}
               />
-
-              {/* S2: Giro a la Izquierda hacia S3 (0) vs Recto (1) */}
               <SwitchTurntable
                 x={250}
                 y={95}
@@ -1221,8 +1190,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 0,20 L 0,-20"
                 onClick={() => toggleSwitch(2)}
               />
-
-              {/* S3: Arriba a Verde (0) vs Abajo a Azul (1) */}
               <SwitchTurntable
                 x={165}
                 y={95}
@@ -1231,8 +1198,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 path1="M 20,0 C 5,0 -5,10 -20,15"
                 onClick={() => toggleSwitch(3)}
               />
-
-              {/* Experto: S4 hacia Casa Negra */}
               {dificultad === "experto" && (
                 <SwitchTurntable
                   x={165}
@@ -1246,40 +1211,25 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             </>
           )}
 
-          {/* 4. Estaciones / Casitas con Estilo Pegatina */}
-          {/* Casa Verde */}
+          {/* Casitas / Estaciones */}
           <CasaSticker x={95} y={65} colorId="verde" label="Verde" />
-          {/* Casa Azul */}
           <CasaSticker x={95} y={150} colorId="azul" label="Azul" />
-
-          {/* Casa Rosa (Medio, Difícil, Experto) */}
           {dificultad !== "facil" && <CasaSticker x={165} y={220} colorId="rosa" label="Rosa" />}
-
-          {/* Casa Amarilla (Difícil, Experto) */}
           {(dificultad === "dificil" || dificultad === "experto") && (
             <CasaSticker x={290} y={240} colorId="amarillo" label="Amarillo" />
           )}
-
-          {/* Casa Negra (Experto) */}
           {dificultad === "experto" && <CasaSticker x={95} y={410} colorId="negro" label="Negro" />}
 
-          {/* 5. Montañas Low-Poly 3D en la Esquina Inferior Derecha (Origen de Trenes) */}
+          {/* Montañas y Túnel */}
           <g className="mountains-origin select-none pointer-events-none">
-            {/* Montaña trasera */}
             <polygon points="210,540 250,440 290,540" fill="#2d5935" />
             <polygon points="250,440 290,540 270,540" fill="#224729" />
-
-            {/* Montaña central con cumbre iluminada */}
             <polygon points="260,540 310,410 360,540" fill="#3f7547" />
             <polygon points="310,410 360,540 335,540" fill="#2c5733" />
             <polygon points="310,410 325,445 295,445" fill="#86efac" opacity="0.85" />
-
-            {/* Montaña delantera */}
             <polygon points="310,540 355,430 400,540" fill="#4d8856" />
             <polygon points="355,430 400,540 380,540" fill="#336139" />
             <polygon points="355,430 370,460 340,460" fill="#bbf7d0" opacity="0.8" />
-
-            {/* Boca del túnel de salida del tren */}
             <rect
               x="238"
               y="470"
@@ -1292,7 +1242,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             />
           </g>
 
-          {/* 6. Trenes en Circulación */}
+          {/* Trenes en movimiento */}
           {trains.map((train) => {
             const pos = calculateTrainPosition(train, dificultad, switchesRef.current);
             return (
@@ -1306,7 +1256,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             );
           })}
 
-          {/* 7. Notificaciones Flotantes de Puntos / Fallos */}
+          {/* Notificaciones flotantes */}
           {floatingScores.map((score) => (
             <text
               key={score.id}
@@ -1325,20 +1275,53 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
           ))}
         </svg>
 
-        {/* ── MODAL OVERLAY CUANDO NO ESTÁ JUGANDO ── */}
+        {/* ── MODALES DE SUBIDA DE NIVEL, VICTORIA O GAMEOVER ── */}
         {fase !== "jugando" && (
-          <div className="absolute inset-0 bg-background/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-200 z-20">
-            {fase === "gameover" ? (
+          <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-200 z-20">
+            {fase === "nivel_completado" ? (
               <div className="space-y-4 max-w-xs">
-                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 shadow-lg">
+                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-lg">
+                  <Sparkles className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="font-display text-2xl font-bold text-foreground">
+                    ¡Nivel Superado!
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Guiaste todos los {config.targetTrains} trenes del nivel con éxito.
+                  </p>
+                </div>
+
+                <div className="bg-secondary/70 p-3.5 rounded-2xl border border-border/80 text-center space-y-1">
+                  <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
+                    Puntos Acumulados
+                  </p>
+                  <p className="font-display text-2xl font-bold text-primary">{puntos}</p>
+                </div>
+
+                <Button
+                  onClick={() => {
+                    if (config.nextLevel) {
+                      iniciarNivel(config.nextLevel);
+                    }
+                  }}
+                  className="w-full rounded-full h-12 text-base font-semibold shadow-lg cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
+                  <ArrowRight className="h-5 w-5 mr-2" /> Siguiente Nivel (
+                  {config.nextLevel ? DIFICULTADES[config.nextLevel].name : ""})
+                </Button>
+              </div>
+            ) : fase === "victoria_total" ? (
+              <div className="space-y-4 max-w-xs">
+                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-lg">
                   <Award className="h-8 w-8" />
                 </div>
                 <div>
                   <h3 className="font-display text-2xl font-bold text-foreground">
-                    ¡Juego Terminado!
+                    ¡Victoria Total!
                   </h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Gran ejercicio de atención selectiva y orientación de vías.
+                    Completaste todos los niveles y dominaste la red de vías.
                   </p>
                 </div>
 
@@ -1353,36 +1336,58 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                     <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
                       Aciertos
                     </p>
-                    <p className="font-display text-xl font-bold text-emerald-400">{aciertos}</p>
-                  </div>
-                  <div>
-                    <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
-                      Mejor Racha
-                    </p>
-                    <p className="font-display text-xl font-bold text-amber-400">🔥 {mejorRacha}</p>
-                  </div>
-                  <div>
-                    <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
-                      Tiempo
-                    </p>
-                    <p className="font-display text-sm font-bold text-foreground">
-                      {formatTime(segundos)}
+                    <p className="font-display text-xl font-bold text-emerald-400">
+                      {totalAciertos}
                     </p>
                   </div>
                 </div>
 
                 <Button
-                  onClick={() => iniciarJuego(dificultad)}
+                  onClick={reiniciarCompleto}
                   className="w-full rounded-full h-11 font-semibold text-sm shadow-lg cursor-pointer"
                 >
                   <RotateCcw className="h-4 w-4 mr-2" /> Jugar de nuevo
                 </Button>
               </div>
+            ) : fase === "gameover" ? (
+              <div className="space-y-4 max-w-xs">
+                <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 shadow-lg">
+                  <Award className="h-8 w-8" />
+                </div>
+                <div>
+                  <h3 className="font-display text-2xl font-bold text-foreground">¡Sin vidas!</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Fallaste 3 desvíos. ¡Buen entrenamiento de foco!
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 bg-secondary/70 p-3 rounded-2xl border border-border/80 text-left">
+                  <div>
+                    <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
+                      Puntos
+                    </p>
+                    <p className="font-display text-xl font-bold text-primary">{puntos}</p>
+                  </div>
+                  <div>
+                    <p className="text-[0.65rem] uppercase text-muted-foreground font-semibold">
+                      Trenes Guiados
+                    </p>
+                    <p className="font-display text-xl font-bold text-emerald-400">
+                      {totalAciertos}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => iniciarNivel(dificultad)}
+                  className="w-full rounded-full h-11 font-semibold text-sm shadow-lg cursor-pointer"
+                >
+                  <RotateCcw className="h-4 w-4 mr-2" /> Reintentar nivel
+                </Button>
+              </div>
             ) : fase === "pausado" ? (
               <div className="space-y-4 max-w-xs">
-                <h3 className="font-display text-2xl font-bold text-foreground">
-                  Partida en Pausa
-                </h3>
+                <h3 className="font-display text-2xl font-bold text-foreground">Pausa</h3>
                 <p className="text-xs text-muted-foreground">
                   Tómate un respiro antes de continuar coordinando las vías.
                 </p>
@@ -1401,13 +1406,13 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 <div>
                   <h3 className="font-display text-xl font-bold text-foreground">Cruce de Vías</h3>
                   <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                    Toca las <strong>plataformas circulares verdes</strong> para girar las vías
-                    hacia la casa de cada tren.
+                    Meta: Guía <strong>{config.targetTrains} trenes</strong> a su color para superar
+                    el nivel.
                   </p>
                 </div>
 
                 <Button
-                  onClick={() => iniciarJuego(dificultad)}
+                  onClick={() => iniciarNivel(dificultad)}
                   className="w-full rounded-full h-12 text-base font-semibold shadow-lg cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white"
                 >
                   <Play className="h-5 w-5 mr-2 fill-current" /> Empezar ({config.name})
@@ -1418,7 +1423,6 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
         )}
       </div>
 
-      {/* ── PIE INFORMATIVO ── */}
       <p className="text-center text-[0.68rem] text-muted-foreground mt-1">
         Toca las plataformas verdes circulares para cambiar la dirección de las vías antes de que el
         tren llegue.
