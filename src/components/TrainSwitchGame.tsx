@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Heart, RotateCcw, Play, Pause, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAudioEngine } from "@/lib/audio-engine";
@@ -130,18 +130,7 @@ const VIEW_W = 400;
 const VIEW_H = 540;
 
 /* ─────────────────────────────────────────────────────────────
-   COORDINADAS FIJAS DEL MAPA (LUMOSITY EXACTO)
-   - Origen Montañas: (250, 480)
-   - S0 (Desvío Amarillo/Arriba): (250, 310)
-   - S1 (Desvío Rosa/Arriba): (250, 200)
-   - S2 (Desvío Superior): (250, 95)
-   - S3 (Desvío Verde/Azul): (165, 95)
-   - S4 (Desvío Negro): (165, 290)
-   - Estación Verde: (95, 65)
-   - Estación Azul: (95, 150)
-   - Estación Rosa: (165, 220)
-   - Estación Amarilla: (290, 240)
-   - Estación Negra: (95, 410)
+   CÁLCULOS DE TRAYECTORIAS PARAMÉTRICAS BÉZIER
 ───────────────────────────────────────────────────────────── */
 
 function bezier(p0: number, p1: number, p2: number, p3: number, t: number) {
@@ -172,7 +161,7 @@ function getPointOnCurve(
 }
 
 /* ─────────────────────────────────────────────────────────────
-   CÁLCULO EXACTO DE TRAYECTORIA SEGÚN EL ESTADO DE LOS DESVÍOS
+   CÁLCULO DE POSICIÓN DEL TREN FÍSICAMENTE ALINEADO
 ───────────────────────────────────────────────────────────── */
 
 function calculateTrainPosition(
@@ -200,25 +189,23 @@ function calculateTrainPosition(
     const t = (p - pS3) / (1 - pS3);
 
     if (r3 === 0) {
-      // Hacia Verde (95, 65)
       const pt = getPointOnCurve(165, 95, 135, 95, 115, 65, 95, 65, t);
       return { ...pt, destColor: "verde" };
     } else {
-      // Hacia Azul (95, 150)
       const pt = getPointOnCurve(165, 95, 135, 95, 115, 150, 95, 150, t);
       return { ...pt, destColor: "azul" };
     }
   }
 
-  // 2. MODO MEDIO: S0 (250, 310) -> S1 (250, 200) [Rosa (165, 220)] -> S3 (165, 95) [Verde, Azul]
+  // 2. MODO MEDIO: S0(250, 310) -> S1(250, 200) [Rosa(165, 220)] -> S3(165, 95) [Verde, Azul]
   if (level === "medio") {
-    const pS0 = 0.3;
+    const pS0 = 0.28;
     if (p <= pS0) {
       const t = p / pS0;
       return getPointOnCurve(250, 480, 250, 420, 250, 360, 250, 310, t);
     }
 
-    const pS1 = 0.55;
+    const pS1 = 0.52;
     if (p <= pS1) {
       const t = (p - pS0) / (pS1 - pS0);
       return getPointOnCurve(250, 310, 250, 270, 250, 240, 250, 200, t);
@@ -227,14 +214,14 @@ function calculateTrainPosition(
     const r1 = train.routeS1 ?? switches[1] ?? 0;
 
     if (r1 === 1) {
-      // Desvía a la Izquierda -> Casa Rosa (165, 220)
+      // Rama a la Izquierda -> Casa Rosa (165, 220)
       const t = (p - pS1) / (1 - pS1);
       const pt = getPointOnCurve(250, 200, 250, 220, 200, 220, 165, 220, t);
       return { ...pt, destColor: "rosa" };
     }
 
-    // Sigue hacia S3 en (165, 95)
-    const pS3 = 0.8;
+    // Sigue recto hacia S3 en (165, 95)
+    const pS3 = 0.78;
     if (p <= pS3) {
       const t = (p - pS1) / (pS3 - pS1);
       return getPointOnCurve(250, 200, 250, 140, 210, 95, 165, 95, t);
@@ -253,11 +240,6 @@ function calculateTrainPosition(
   }
 
   // 3. MODO DIFÍCIL & EXPERTO (Fiel a la captura Lumosity)
-  // S0(250, 310) -> Amarillo(290, 240) o Arriba hacia S1(250, 200)
-  // S1(250, 200) -> Rosa(165, 220) o Arriba hacia S2(250, 95)
-  // S2(250, 95) -> S3(165, 95)
-  // S3(165, 95) -> Verde(95, 65) o Azul(95, 150)
-  // S4(165, 290) -> Negro(95, 410) (Experto)
   const pS0 = 0.28;
   if (p <= pS0) {
     const t = p / pS0;
@@ -266,14 +248,14 @@ function calculateTrainPosition(
 
   const r0 = train.routeS0 ?? switches[0] ?? 0;
 
-  // En S0: Si toma la DERECHA -> Casa Amarilla (290, 240)
+  // Si en S0 va a la DERECHA -> Casa Amarilla (290, 240)
   if (r0 === 1) {
     const t = (p - pS0) / (1 - pS0);
     const pt = getPointOnCurve(250, 310, 250, 290, 290, 280, 290, 240, t);
     return { ...pt, destColor: "amarillo" };
   }
 
-  // En S0: Sigue recto hacia S1 (250, 200)
+  // S0 sigue recto a S1 (250, 200)
   const pS1 = 0.5;
   if (p <= pS1) {
     const t = (p - pS0) / (pS1 - pS0);
@@ -282,7 +264,7 @@ function calculateTrainPosition(
 
   const r1 = train.routeS1 ?? switches[1] ?? 0;
 
-  // En S1: Si toma la IZQUIERDA -> Casa Rosa (165, 220) o S4 Negro
+  // Si en S1 va a la IZQUIERDA -> Casa Rosa (165, 220) o S4 Negro
   if (r1 === 1) {
     const pRosa = 0.76;
     if (p <= pRosa) {
@@ -304,21 +286,21 @@ function calculateTrainPosition(
     return { ...pt, destColor: "rosa" };
   }
 
-  // En S1: Sigue recto hacia S2 (250, 95)
+  // S1 sigue recto a S2 (250, 95)
   const pS2 = 0.68;
   if (p <= pS2) {
     const t = (p - pS1) / (pS2 - pS1);
     return getPointOnCurve(250, 200, 250, 160, 250, 130, 250, 95, t);
   }
 
-  // En S2: Pasa hacia S3 (165, 95)
+  // S2 pasa a S3 (165, 95)
   const pS3 = 0.82;
   if (p <= pS3) {
     const t = (p - pS2) / (pS3 - pS2);
     return getPointOnCurve(250, 95, 230, 95, 190, 95, 165, 95, t);
   }
 
-  // En S3: Elige entre Verde (95, 65) y Azul (95, 150)
+  // S3 elige entre Verde (95, 65) y Azul (95, 150)
   const r3 = train.routeS3 ?? switches[3] ?? 0;
   const t = (p - pS3) / (1 - pS3);
 
@@ -349,7 +331,7 @@ function CasaSticker({
   const col = COLORES_LUMOSITY[colorId];
 
   return (
-    <g transform={`translate(${x - 22}, ${y - 24})`} className="select-none">
+    <g transform={`translate(${x - 22}, ${y - 24})`} className="select-none pointer-events-none">
       {/* Sombra suave de pegatina */}
       <rect
         x="2"
@@ -437,7 +419,10 @@ function TrenVapor({
   const col = COLORES_LUMOSITY[colorId];
 
   return (
-    <g transform={`translate(${x}, ${y}) rotate(${angle + 90})`} className="select-none">
+    <g
+      transform={`translate(${x}, ${y}) rotate(${angle + 90})`}
+      className="select-none pointer-events-none"
+    >
       {/* Sombra de la locomotora */}
       <rect
         x="-11"
@@ -496,39 +481,34 @@ function TrenVapor({
 }
 
 /* ─────────────────────────────────────────────────────────────
-   PLATAFORMA CIRCULAR VERDE GIRATORIA (DESVÍO CON GIRO EXACTO)
-   - angle0: Rotación de la vía interior cuando state === 0
-   - angle1: Rotación de la vía interior cuando state === 1
-   - trackKind: "straight" (recto) o "curve" (curvado hacia la salida)
+   PLATAFORMA CIRCULAR VERDE GIRATORIA (DESVÍO CONECTADO EXACTO)
+   - path0: Trazado SVG exacto que conecta la entrada con la salida 0
+   - path1: Trazado SVG exacto que conecta la entrada con la salida 1
 ───────────────────────────────────────────────────────────── */
 
-function CircularSwitchPlatform({
+function SwitchTurntable({
   x,
   y,
   state,
-  angle0,
-  angle1,
-  trackKind = "straight",
+  path0,
+  path1,
   onClick,
 }: {
   x: number;
   y: number;
   state: 0 | 1;
-  angle0: number;
-  angle1: number;
-  trackKind?: "straight" | "curve";
+  path0: string;
+  path1: string;
   onClick: () => void;
 }) {
-  const currentAngle = state === 0 ? angle0 : angle1;
-
   return (
     <g
       transform={`translate(${x}, ${y})`}
       onClick={onClick}
       className="cursor-pointer group select-none"
     >
-      {/* Zona táctil expandida */}
-      <circle r="34" fill="transparent" />
+      {/* Zona táctil grande para dedos en móvil */}
+      <circle r="36" fill="transparent" />
 
       {/* Sombra 3D de la plataforma circular */}
       <circle cx="0" cy="3" r="22" fill="#1a351f" opacity="0.6" />
@@ -545,116 +525,38 @@ function CircularSwitchPlatform({
         className="transition-transform duration-200 group-hover:scale-105"
       />
 
-      {/* ── Vía interna giratoria que se alinea exactamente con la dirección activa ── */}
-      <g
-        transform={`rotate(${currentAngle})`}
-        style={{
-          transition: "transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1)",
-          transformOrigin: "0 0",
-        }}
-      >
-        {trackKind === "straight" ? (
-          <>
-            {/* Traviesas internas de madera */}
-            <line
-              x1="-12"
-              y1="-8"
-              x2="12"
-              y2="-8"
-              stroke="#234226"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="-12"
-              y1="-2"
-              x2="12"
-              y2="-2"
-              stroke="#234226"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="-12"
-              y1="4"
-              x2="12"
-              y2="4"
-              stroke="#234226"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="-12"
-              y1="10"
-              x2="12"
-              y2="10"
-              stroke="#234226"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
+      {/* 1. Vía inactiva (Atenuada) */}
+      <path
+        d={state === 0 ? path1 : path0}
+        fill="none"
+        stroke="#27532a"
+        strokeWidth="6"
+        strokeLinecap="round"
+        opacity="0.5"
+      />
 
-            {/* Dos raíles metálicos paralelos */}
-            <line
-              x1="-6"
-              y1="-18"
-              x2="-6"
-              y2="18"
-              stroke="#1f2f22"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="6"
-              y1="-18"
-              x2="6"
-              y2="18"
-              stroke="#1f2f22"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="-6"
-              y1="-18"
-              x2="-6"
-              y2="18"
-              stroke="#e5e7eb"
-              strokeWidth="0.8"
-              strokeLinecap="round"
-            />
-            <line
-              x1="6"
-              y1="-18"
-              x2="6"
-              y2="18"
-              stroke="#e5e7eb"
-              strokeWidth="0.8"
-              strokeLinecap="round"
-            />
-          </>
-        ) : (
-          <>
-            {/* Vía curvada hacia la salida */}
-            <path
-              d="M 0,18 C 0,5 -5,-5 -18,-5"
-              fill="none"
-              stroke="#1f2f22"
-              strokeWidth="9"
-              strokeLinecap="round"
-            />
-            <path
-              d="M 0,18 C 0,5 -5,-5 -18,-5"
-              fill="none"
-              stroke="#e5e7eb"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          </>
-        )}
+      {/* 2. Vía activa (Resaltada y físicamente conectada) */}
+      <path
+        d={state === 0 ? path0 : path1}
+        fill="none"
+        stroke="#1a261c"
+        strokeWidth="8"
+        strokeLinecap="round"
+        className="transition-all duration-250 ease-out"
+      />
 
-        {/* Perno central dorado y flecha indicadora */}
-        <circle cx="0" cy="0" r="4" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />
-        <polygon points="-2.5,-12 2.5,-12 0,-16" fill="#ffffff" />
-      </g>
+      {/* Riel metálico brillante en la vía activa */}
+      <path
+        d={state === 0 ? path0 : path1}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        className="transition-all duration-250 ease-out drop-shadow-[0_0_2px_rgba(255,255,255,0.8)]"
+      />
+
+      {/* Perno central dorado */}
+      <circle cx="0" cy="0" r="3.5" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />
 
       {/* Anillo de feedback al pasar el ratón */}
       <circle
@@ -863,15 +765,15 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
               updated.routeS3 = currentSw[3];
             }
           } else if (dificultad === "medio") {
-            if (nextP >= 0.3 && !tr.passedS0) {
+            if (nextP >= 0.28 && !tr.passedS0) {
               updated.passedS0 = true;
               updated.routeS0 = currentSw[0];
             }
-            if (nextP >= 0.55 && !tr.passedS1) {
+            if (nextP >= 0.52 && !tr.passedS1) {
               updated.passedS1 = true;
               updated.routeS1 = currentSw[1];
             }
-            if (nextP >= 0.8 && !tr.passedS3 && updated.routeS1 === 0) {
+            if (nextP >= 0.78 && !tr.passedS3 && updated.routeS1 === 0) {
               updated.passedS3 = true;
               updated.routeS3 = currentSw[3];
             }
@@ -1047,36 +949,36 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             {dificultad === "facil" && (
               <>
                 {/* Origen a S1(250, 200) */}
-                <path d="M 250,480 L 250,200" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,480 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,480 L 250,200"
+                  d="M 250,480 L 250,220"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S1 a S3(165, 95) */}
-                <path d="M 250,200 C 250,140 210,95 165,95" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,180 C 250,140 210,95 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,200 C 250,140 210,95 165,95"
+                  d="M 250,180 C 250,140 210,95 185,95"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S3 a Verde(95, 65) */}
-                <path d="M 165,95 C 135,95 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,65 95,65"
+                  d="M 145,85 C 130,80 115,65 95,65"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S3 a Azul(95, 150) */}
-                <path d="M 165,95 C 135,95 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,110 C 130,125 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,150 95,150"
+                  d="M 145,110 C 130,125 115,150 95,150"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
@@ -1088,52 +990,52 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             {dificultad === "medio" && (
               <>
                 {/* Origen a S0(250, 310) */}
-                <path d="M 250,480 L 250,310" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,480 L 250,330" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,480 L 250,310"
+                  d="M 250,480 L 250,330"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S0 a S1(250, 200) */}
-                <path d="M 250,310 L 250,200" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,290 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,310 L 250,200"
+                  d="M 250,290 L 250,220"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S1 a Rosa(165, 220) */}
-                <path d="M 250,200 C 250,220 200,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 230,205 C 205,215 185,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,200 C 250,220 200,220 165,220"
+                  d="M 230,205 C 205,215 185,220 165,220"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S1 a S3(165, 95) */}
-                <path d="M 250,200 C 250,140 210,95 165,95" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,180 C 250,140 210,95 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,200 C 250,140 210,95 165,95"
+                  d="M 250,180 C 250,140 210,95 185,95"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* S3 a Verde(95, 65) y Azul(95, 150) */}
-                <path d="M 165,95 C 135,95 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,65 95,65"
+                  d="M 145,85 C 130,80 115,65 95,65"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
-                <path d="M 165,95 C 135,95 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,110 C 130,125 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,150 95,150"
+                  d="M 145,110 C 130,125 115,150 95,150"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
@@ -1145,72 +1047,72 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             {(dificultad === "dificil" || dificultad === "experto") && (
               <>
                 {/* Origen a S0(250, 310) */}
-                <path d="M 250,480 L 250,310" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,480 L 250,330" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,480 L 250,310"
+                  d="M 250,480 L 250,330"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S0 a Amarillo(290, 240) (Derecha) */}
-                <path d="M 250,310 C 250,290 290,280 290,240" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 270,305 C 280,300 290,280 290,240" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,310 C 250,290 290,280 290,240"
+                  d="M 270,305 C 280,300 290,280 290,240"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S0 a S1(250, 200) (Arriba) */}
-                <path d="M 250,310 L 250,200" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,290 L 250,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,310 L 250,200"
+                  d="M 250,290 L 250,220"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S1 a Rosa(165, 220) (Izquierda) */}
-                <path d="M 250,200 C 250,220 200,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 230,205 C 205,215 185,220 165,220" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,200 C 250,220 200,220 165,220"
+                  d="M 230,205 C 205,215 185,220 165,220"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S1 a S2(250, 95) (Arriba) */}
-                <path d="M 250,200 L 250,95" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 250,180 L 250,115" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,200 L 250,95"
+                  d="M 250,180 L 250,115"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S2 a S3(165, 95) (Izquierda) */}
-                <path d="M 250,95 L 165,95" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 230,95 L 185,95" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 250,95 L 165,95"
+                  d="M 230,95 L 185,95"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S3 a Verde(95, 65) */}
-                <path d="M 165,95 C 135,95 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,85 C 130,80 115,65 95,65" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,65 95,65"
+                  d="M 145,85 C 130,80 115,65 95,65"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
                 />
 
                 {/* De S3 a Azul(95, 150) */}
-                <path d="M 165,95 C 135,95 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
+                <path d="M 145,110 C 130,125 115,150 95,150" stroke="#1a2b1c" strokeWidth="9" />
                 <path
-                  d="M 165,95 C 135,95 115,150 95,150"
+                  d="M 145,110 C 130,125 115,150 95,150"
                   stroke="#d4d4d8"
                   strokeWidth="1.8"
                   strokeDasharray="4,4"
@@ -1219,9 +1121,9 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
                 {/* Modo Experto: Vía hacia Casa Negra */}
                 {dificultad === "experto" && (
                   <>
-                    <path d="M 165,220 C 165,300 95,340 95,410" stroke="#1a2b1c" strokeWidth="9" />
+                    <path d="M 145,305 C 125,320 95,350 95,410" stroke="#1a2b1c" strokeWidth="9" />
                     <path
-                      d="M 165,220 C 165,300 95,340 95,410"
+                      d="M 145,305 C 125,320 95,350 95,410"
                       stroke="#d4d4d8"
                       strokeWidth="1.8"
                       strokeDasharray="4,4"
@@ -1232,25 +1134,25 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
             )}
           </g>
 
-          {/* 3. Plataformas Circulares Verdes Giratorias (Desvíos con alineación exacta) */}
+          {/* 3. Plataformas Circulares Verdes (Desvíos con Trazados Físicos Conectados) */}
           {dificultad === "facil" && (
             <>
-              {/* S1: Continúa hacia S3 */}
-              <CircularSwitchPlatform
+              {/* S1: Recto/Curva hacia S3 */}
+              <SwitchTurntable
                 x={250}
                 y={200}
                 state={switches[1] ?? 0}
-                angle0={-35}
-                angle1={-35}
+                path0="M 0,20 C 0,5 -5,-10 -20,-20"
+                path1="M 0,20 C 0,5 -5,-10 -20,-20"
                 onClick={() => toggleSwitch(1)}
               />
-              {/* S3: Elige entre Verde (-45°) y Azul (+45°) */}
-              <CircularSwitchPlatform
+              {/* S3: Arriba a Verde vs Abajo a Azul */}
+              <SwitchTurntable
                 x={165}
                 y={95}
                 state={switches[3] ?? 0}
-                angle0={-135}
-                angle1={135}
+                path0="M 20,0 C 5,0 -5,-5 -20,-10"
+                path1="M 20,0 C 5,0 -5,10 -20,15"
                 onClick={() => toggleSwitch(3)}
               />
             </>
@@ -1258,31 +1160,31 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
           {dificultad === "medio" && (
             <>
-              {/* S0: Sube hacia S1 */}
-              <CircularSwitchPlatform
+              {/* S0: Recto hacia S1 */}
+              <SwitchTurntable
                 x={250}
                 y={310}
                 state={switches[0] ?? 0}
-                angle0={0}
-                angle1={0}
+                path0="M 0,20 L 0,-20"
+                path1="M 0,20 L 0,-20"
                 onClick={() => toggleSwitch(0)}
               />
-              {/* S1: Recto Arriba (0°) vs Giro Izquierda a Rosa (-55°) */}
-              <CircularSwitchPlatform
+              {/* S1: Recto Arriba (0) vs Giro Izquierda a Rosa (1) */}
+              <SwitchTurntable
                 x={250}
                 y={200}
                 state={switches[1] ?? 0}
-                angle0={0}
-                angle1={-55}
+                path0="M 0,20 L 0,-20"
+                path1="M 0,20 C 0,5 -8,5 -20,5"
                 onClick={() => toggleSwitch(1)}
               />
-              {/* S3: Arriba a Verde (-135°) vs Abajo a Azul (135°) */}
-              <CircularSwitchPlatform
+              {/* S3: Arriba a Verde (0) vs Abajo a Azul (1) */}
+              <SwitchTurntable
                 x={165}
                 y={95}
                 state={switches[3] ?? 0}
-                angle0={-135}
-                angle1={135}
+                path0="M 20,0 C 5,0 -5,-5 -20,-10"
+                path1="M 20,0 C 5,0 -5,10 -20,15"
                 onClick={() => toggleSwitch(3)}
               />
             </>
@@ -1290,54 +1192,54 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
           {(dificultad === "dificil" || dificultad === "experto") && (
             <>
-              {/* S0: Desvío inferior: Recto Arriba (0°) vs Giro Derecha a Amarillo (+55°) */}
-              <CircularSwitchPlatform
+              {/* S0: Recto Arriba hacia S1 (0) vs Giro Derecha a Amarillo (1) */}
+              <SwitchTurntable
                 x={250}
                 y={310}
                 state={switches[0] ?? 0}
-                angle0={0}
-                angle1={55}
+                path0="M 0,20 L 0,-20"
+                path1="M 0,20 C 0,5 8,-2 20,-5"
                 onClick={() => toggleSwitch(0)}
               />
 
-              {/* S1: Desvío medio: Recto Arriba (0°) vs Giro Izquierda a Rosa (-55°) */}
-              <CircularSwitchPlatform
+              {/* S1: Recto Arriba hacia S2 (0) vs Giro Izquierda a Rosa (1) */}
+              <SwitchTurntable
                 x={250}
                 y={200}
                 state={switches[1] ?? 0}
-                angle0={0}
-                angle1={-55}
+                path0="M 0,20 L 0,-20"
+                path1="M 0,20 C 0,5 -8,5 -20,5"
                 onClick={() => toggleSwitch(1)}
               />
 
-              {/* S2: Desvío superior: Giro hacia S3 (-90°) vs Recto (0°) */}
-              <CircularSwitchPlatform
+              {/* S2: Giro a la Izquierda hacia S3 (0) vs Recto (1) */}
+              <SwitchTurntable
                 x={250}
                 y={95}
                 state={switches[2] ?? 0}
-                angle0={-90}
-                angle1={0}
+                path0="M 0,20 C 0,5 -5,0 -20,0"
+                path1="M 0,20 L 0,-20"
                 onClick={() => toggleSwitch(2)}
               />
 
-              {/* S3: Desvío top-left: Arriba a Verde (-135°) vs Abajo a Azul (135°) */}
-              <CircularSwitchPlatform
+              {/* S3: Arriba a Verde (0) vs Abajo a Azul (1) */}
+              <SwitchTurntable
                 x={165}
                 y={95}
                 state={switches[3] ?? 0}
-                angle0={-135}
-                angle1={135}
+                path0="M 20,0 C 5,0 -5,-5 -20,-10"
+                path1="M 20,0 C 5,0 -5,10 -20,15"
                 onClick={() => toggleSwitch(3)}
               />
 
               {/* Experto: S4 hacia Casa Negra */}
               {dificultad === "experto" && (
-                <CircularSwitchPlatform
+                <SwitchTurntable
                   x={165}
                   y={290}
                   state={switches[4] ?? 0}
-                  angle0={0}
-                  angle1={-140}
+                  path0="M 0,-20 L 0,0"
+                  path1="M 0,-20 C 0,0 -10,10 -20,15"
                   onClick={() => toggleSwitch(4)}
                 />
               )}
@@ -1362,7 +1264,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
           {dificultad === "experto" && <CasaSticker x={95} y={410} colorId="negro" label="Negro" />}
 
           {/* 5. Montañas Low-Poly 3D en la Esquina Inferior Derecha (Origen de Trenes) */}
-          <g className="mountains-origin select-none">
+          <g className="mountains-origin select-none pointer-events-none">
             {/* Montaña trasera */}
             <polygon points="210,540 250,440 290,540" fill="#2d5935" />
             <polygon points="250,440 290,540 270,540" fill="#224729" />
@@ -1412,7 +1314,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
               y={score.y}
               textAnchor="middle"
               className={cn(
-                "font-display text-sm font-bold animate-out fade-out slide-out-to-top duration-700 select-none",
+                "font-display text-sm font-bold animate-out fade-out slide-out-to-top duration-700 select-none pointer-events-none",
                 score.isSuccess
                   ? "fill-emerald-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
                   : "fill-rose-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]",
@@ -1425,7 +1327,7 @@ export function TrainSwitchGame({ registrar }: { registrar: Registrar }) {
 
         {/* ── MODAL OVERLAY CUANDO NO ESTÁ JUGANDO ── */}
         {fase !== "jugando" && (
-          <div className="absolute inset-0 bg-background/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-200">
+          <div className="absolute inset-0 bg-background/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-200 z-20">
             {fase === "gameover" ? (
               <div className="space-y-4 max-w-xs">
                 <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 shadow-lg">
