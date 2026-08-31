@@ -35,6 +35,7 @@ import { procesarCancionServerFn } from "@/lib/soundtrack.functions";
 import {
   uploadAudioToSupabase,
   eliminarCancionDeSupabase,
+  resolvePlayableUrl,
 } from "@/lib/supabase-soundtrack";
 import { cn } from "@/lib/utils";
 
@@ -417,11 +418,15 @@ function BandaSonora() {
       }
 
       if (audioRef.current) {
-        audioRef.current.src = s.url_enlace;
-        audioRef.current.volume = isMuted ? 0 : volume;
-        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
-          toast.error("Error al reproducir el archivo de audio.");
-          setIsPlaying(false);
+        const el = audioRef.current;
+        // El bucket es privado: se firma la URL justo antes de reproducir
+        void resolvePlayableUrl(s.url_enlace).then((playableUrl) => {
+          el.src = playableUrl;
+          el.volume = isMuted ? 0 : volume;
+          el.play().then(() => setIsPlaying(true)).catch(() => {
+            toast.error("Error al reproducir el archivo de audio.");
+            setIsPlaying(false);
+          });
         });
       }
     }
@@ -697,16 +702,19 @@ function BandaSonora() {
                       ) : null}
                     </div>
 
-                    <a
-                      href={s.url_enlace}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-muted-foreground/60 transition-colors hover:text-foreground p-1"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void resolvePlayableUrl(s.url_enlace).then((u) => {
+                          window.open(u, "_blank", "noopener,noreferrer");
+                        });
+                      }}
+                      className="text-muted-foreground/60 transition-colors hover:text-foreground p-1 cursor-pointer"
                       title="Abrir enlace original"
                       aria-label={`Abrir ${s.nombre_cancion}`}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
+                    </button>
 
                     <button
                       onClick={() => del.mutate({ id: s.id, url_enlace: s.url_enlace })}

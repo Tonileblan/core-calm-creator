@@ -771,45 +771,45 @@ export function TrainSwitchGame({
           if (dificultad === "facil") {
             if (nextP >= 0.45 && !tr.passedS1) {
               updated.passedS1 = true;
-              updated.routeS1 = currentSw[1];
+              updated.routeS1 = currentSw[1] ?? 0;
             }
             if (nextP >= 0.75 && !tr.passedS3) {
               updated.passedS3 = true;
-              updated.routeS3 = currentSw[3];
+              updated.routeS3 = currentSw[3] ?? 0;
             }
           } else if (dificultad === "medio") {
             if (nextP >= 0.28 && !tr.passedS0) {
               updated.passedS0 = true;
-              updated.routeS0 = currentSw[0];
+              updated.routeS0 = currentSw[0] ?? 0;
             }
             if (nextP >= 0.52 && !tr.passedS1) {
               updated.passedS1 = true;
-              updated.routeS1 = currentSw[1];
+              updated.routeS1 = currentSw[1] ?? 0;
             }
             if (nextP >= 0.78 && !tr.passedS3 && updated.routeS1 === 0) {
               updated.passedS3 = true;
-              updated.routeS3 = currentSw[3];
+              updated.routeS3 = currentSw[3] ?? 0;
             }
           } else {
             if (nextP >= 0.28 && !tr.passedS0) {
               updated.passedS0 = true;
-              updated.routeS0 = currentSw[0];
+              updated.routeS0 = currentSw[0] ?? 0;
             }
             if (nextP >= 0.5 && !tr.passedS1 && updated.routeS0 === 0) {
               updated.passedS1 = true;
-              updated.routeS1 = currentSw[1];
+              updated.routeS1 = currentSw[1] ?? 0;
             }
             if (nextP >= 0.68 && !tr.passedS2 && updated.routeS1 === 0) {
               updated.passedS2 = true;
-              updated.routeS2 = currentSw[2];
+              updated.routeS2 = currentSw[2] ?? 0;
             }
             if (nextP >= 0.82 && !tr.passedS3 && updated.routeS1 === 0) {
               updated.passedS3 = true;
-              updated.routeS3 = currentSw[3];
+              updated.routeS3 = currentSw[3] ?? 0;
             }
             if (nextP >= 0.76 && !tr.passedS4 && updated.routeS1 === 1) {
               updated.passedS4 = true;
-              updated.routeS4 = currentSw[4];
+              updated.routeS4 = currentSw[4] ?? 0;
             }
           }
 
