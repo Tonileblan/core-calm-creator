@@ -21,6 +21,7 @@ import {
   Volume2,
   VolumeX,
   ChevronRight,
+  GitFork,
 } from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
@@ -37,6 +38,7 @@ import {
   ParejasGame,
   StroopGame,
   CalculoGame,
+  TrenesGame,
   type Registrar,
 } from "@/components/MindGames";
 import { useScrollLock } from "@/hooks/useScrollLock";
@@ -62,7 +64,8 @@ export const Route = createFileRoute("/gimnasio")({
   component: Gimnasio,
 });
 
-type ActividadId = "secuencia" | "parejas" | "stroop" | "calculo" | "foco" | "reencuadre";
+type ActividadId =
+  "trenes" | "secuencia" | "parejas" | "stroop" | "calculo" | "foco" | "reencuadre";
 
 type ActividadDef = {
   id: ActividadId;
@@ -76,6 +79,16 @@ type ActividadDef = {
 };
 
 const ACTIVIDADES: ActividadDef[] = [
+  {
+    id: "trenes",
+    titulo: "Cruce de Vías",
+    subtitulo: "Cambia las vías y guía los trenes de colores",
+    tag: "Atención y Vías",
+    icon: GitFork,
+    colorClass: "text-amber-400",
+    bgClass: "bg-amber-500/15",
+    borderClass: "border-amber-500/30 hover:border-amber-400/60",
+  },
   {
     id: "parejas",
     titulo: "Memoria Visual",
@@ -221,7 +234,12 @@ function Gimnasio() {
                   )}
                 >
                   <div className="flex items-center gap-3.5">
-                    <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl", act.bgClass)}>
+                    <div
+                      className={cn(
+                        "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl",
+                        act.bgClass,
+                      )}
+                    >
                       <Icon className={cn("h-6 w-6", act.colorClass)} strokeWidth={2} />
                     </div>
                     <div>
@@ -262,7 +280,9 @@ function Gimnasio() {
             </button>
 
             <div className="flex items-center gap-2">
-              <actividadSeleccionada.icon className={cn("h-4 w-4", actividadSeleccionada.colorClass)} />
+              <actividadSeleccionada.icon
+                className={cn("h-4 w-4", actividadSeleccionada.colorClass)}
+              />
               <h2 className="font-display text-sm font-semibold text-foreground">
                 {actividadSeleccionada.titulo}
               </h2>
@@ -280,21 +300,15 @@ function Gimnasio() {
 
           {/* Área interactiva central de la actividad */}
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-3 overflow-hidden">
-            {actividadActiva === "parejas" ? (
-              <ParejasGame registrar={registrar} />
-            ) : null}
+            {actividadActiva === "trenes" ? <TrenesGame registrar={registrar} /> : null}
 
-            {actividadActiva === "secuencia" ? (
-              <SecuenciaGame registrar={registrar} />
-            ) : null}
+            {actividadActiva === "parejas" ? <ParejasGame registrar={registrar} /> : null}
 
-            {actividadActiva === "stroop" ? (
-              <StroopGame registrar={registrar} />
-            ) : null}
+            {actividadActiva === "secuencia" ? <SecuenciaGame registrar={registrar} /> : null}
 
-            {actividadActiva === "calculo" ? (
-              <CalculoGame registrar={registrar} />
-            ) : null}
+            {actividadActiva === "stroop" ? <StroopGame registrar={registrar} /> : null}
+
+            {actividadActiva === "calculo" ? <CalculoGame registrar={registrar} /> : null}
 
             {actividadActiva === "foco" ? (
               <FocusTimerIndependent
@@ -339,15 +353,7 @@ function Gimnasio() {
   );
 }
 
-function Stat({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: string;
-  icon: typeof Timer;
-}) {
+function Stat({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Timer }) {
   return (
     <div className="surface-panel p-4">
       <Icon className="h-4 w-4 text-primary" />
@@ -361,11 +367,7 @@ function Stat({
    ACTIVIDAD INDEPENDIENTE: BLOQUE DE FOCO
 ───────────────────────────────────────────────────────────── */
 
-function FocusTimerIndependent({
-  onDone,
-}: {
-  onDone: (minutos: number, sonido: SoundId) => void;
-}) {
+function FocusTimerIndependent({ onDone }: { onDone: (minutos: number, sonido: SoundId) => void }) {
   const [bloque, setBloque] = useState(BLOQUES_FOCO[0]!);
   const [segundos, setSegundos] = useState(BLOQUES_FOCO[0]!.minutos * 60);
   const [corriendo, setCorriendo] = useState(false);
@@ -479,13 +481,7 @@ function FocusTimerIndependent({
    ACTIVIDAD INDEPENDIENTE: REENCUADRE COGNITIVO IA
 ───────────────────────────────────────────────────────────── */
 
-function ReencuadreIndependent({
-  onSaved,
-  onClose,
-}: {
-  onSaved: () => void;
-  onClose: () => void;
-}) {
+function ReencuadreIndependent({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
   const { signedIn } = useAuth();
   const reencuadrar = useServerFn(reencuadrarPensamiento);
   const [pensamiento, setPensamiento] = useState("");
@@ -509,8 +505,13 @@ function ReencuadreIndependent({
       <div className="surface-panel p-6 text-center text-sm text-muted-foreground my-auto">
         <Sparkles className="h-8 w-8 text-primary mx-auto mb-3" />
         <p className="font-display text-lg text-foreground mb-2">Acceso a Reestructuración IA</p>
-        <p className="mb-4">Inicia sesión para usar la reestructuración cognitiva con IA y guardar tus notas.</p>
-        <Link to="/auth" className="inline-block rounded-full bg-primary px-6 py-2.5 text-xs font-semibold text-primary-foreground">
+        <p className="mb-4">
+          Inicia sesión para usar la reestructuración cognitiva con IA y guardar tus notas.
+        </p>
+        <Link
+          to="/auth"
+          className="inline-block rounded-full bg-primary px-6 py-2.5 text-xs font-semibold text-primary-foreground"
+        >
           Iniciar sesión
         </Link>
       </div>
@@ -518,12 +519,16 @@ function ReencuadreIndependent({
   }
 
   return (
-    <div className="flex flex-col justify-between h-full w-full max-w-sm mx-auto py-2 touch-none select-none overflow-y-auto scrollbar-none" data-allow-scroll>
+    <div
+      className="flex flex-col justify-between h-full w-full max-w-sm mx-auto py-2 touch-none select-none overflow-y-auto scrollbar-none"
+      data-allow-scroll
+    >
       <div className="space-y-4 my-auto">
         <div>
           <h3 className="font-display text-lg text-foreground">Reestructuración cognitiva</h3>
           <p className="text-xs text-muted-foreground">
-            Escribe el pensamiento o momento de frustración y la IA te ofrecerá un reencuadre objetivo.
+            Escribe el pensamiento o momento de frustración y la IA te ofrecerá un reencuadre
+            objetivo.
           </p>
         </div>
 
@@ -553,7 +558,10 @@ function ReencuadreIndependent({
         </Button>
 
         {analisis ? (
-          <div className="surface-panel p-4 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap max-h-44 overflow-y-auto" data-allow-scroll>
+          <div
+            className="surface-panel p-4 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap max-h-44 overflow-y-auto"
+            data-allow-scroll
+          >
             {analisis}
           </div>
         ) : null}

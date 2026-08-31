@@ -21,7 +21,11 @@ import { Progress } from "@/components/ui/progress";
 import { getAudioEngine } from "@/lib/audio-engine";
 import { cn } from "@/lib/utils";
 
-export type Registrar = (ejercicio: string, minutos: number, detalle: Record<string, unknown>) => void;
+export type Registrar = (
+  ejercicio: string,
+  minutos: number,
+  detalle: Record<string, unknown>,
+) => void;
 
 export function Marcador({ items }: { items: [string, string][] }) {
   return (
@@ -50,10 +54,14 @@ export function CuadroFlotanteTurno({
   variante?: "turno" | "observa" | "exito" | "error" | "info";
 }) {
   const estilos = {
-    turno: "bg-primary/20 border-primary/50 text-primary shadow-[0_0_30px_rgba(var(--primary),0.3)] ring-1 ring-primary/40",
-    observa: "bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-[0_0_25px_rgba(251,191,36,0.25)]",
-    exito: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_25px_rgba(52,211,153,0.25)]",
-    error: "bg-destructive/20 border-destructive/40 text-destructive shadow-[0_0_25px_rgba(239,68,68,0.25)]",
+    turno:
+      "bg-primary/20 border-primary/50 text-primary shadow-[0_0_30px_rgba(var(--primary),0.3)] ring-1 ring-primary/40",
+    observa:
+      "bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-[0_0_25px_rgba(251,191,36,0.25)]",
+    exito:
+      "bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_25px_rgba(52,211,153,0.25)]",
+    error:
+      "bg-destructive/20 border-destructive/40 text-destructive shadow-[0_0_25px_rgba(239,68,68,0.25)]",
     info: "bg-secondary/80 border-border/80 text-foreground/90",
   };
 
@@ -87,10 +95,26 @@ export function CuadroFlotanteTurno({
 ───────────────────────────────────────────────────────────── */
 
 const CELDAS = [
-  { bg: "bg-primary/60 border-primary/40", on: "bg-primary shadow-[0_0_35px_rgba(var(--primary),0.8)]", tono: 523 },
-  { bg: "bg-amber-500/50 border-amber-500/40", on: "bg-amber-400 shadow-[0_0_35px_rgba(251,191,36,0.8)]", tono: 659 },
-  { bg: "bg-indigo-600/50 border-indigo-500/40", on: "bg-indigo-400 shadow-[0_0_35px_rgba(129,140,248,0.8)]", tono: 784 },
-  { bg: "bg-emerald-600/50 border-emerald-500/40", on: "bg-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.8)]", tono: 880 },
+  {
+    bg: "bg-primary/60 border-primary/40",
+    on: "bg-primary shadow-[0_0_35px_rgba(var(--primary),0.8)]",
+    tono: 523,
+  },
+  {
+    bg: "bg-amber-500/50 border-amber-500/40",
+    on: "bg-amber-400 shadow-[0_0_35px_rgba(251,191,36,0.8)]",
+    tono: 659,
+  },
+  {
+    bg: "bg-indigo-600/50 border-indigo-500/40",
+    on: "bg-indigo-400 shadow-[0_0_35px_rgba(129,140,248,0.8)]",
+    tono: 784,
+  },
+  {
+    bg: "bg-emerald-600/50 border-emerald-500/40",
+    on: "bg-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.8)]",
+    tono: 880,
+  },
 ];
 
 export function SecuenciaGame({ registrar }: { registrar: Registrar }) {
@@ -120,10 +144,13 @@ export function SecuenciaGame({ registrar }: { registrar: Registrar }) {
       timers.current.push(window.setTimeout(() => setActiva(null), i * 650 + 400));
     });
     timers.current.push(
-      window.setTimeout(() => {
-        setFase("jugar");
-        setPaso(0);
-      }, s.length * 650 + 200),
+      window.setTimeout(
+        () => {
+          setFase("jugar");
+          setPaso(0);
+        },
+        s.length * 650 + 200,
+      ),
     );
   }, []);
 
@@ -188,11 +215,7 @@ export function SecuenciaGame({ registrar }: { registrar: Registrar }) {
             />
           )}
           {fase === "idle" && (
-            <CuadroFlotanteTurno
-              variante="info"
-              texto="Memoria de Trabajo"
-              subtexto="Simon Dice"
-            />
+            <CuadroFlotanteTurno variante="info" texto="Memoria de Trabajo" subtexto="Simon Dice" />
           )}
         </div>
 
@@ -252,12 +275,54 @@ export type MemoryCardDef = {
 };
 
 const ICON_PAIRS: MemoryCardDef[] = [
-  { id: "flame", label: "Fuego", icon: Flame, colorClass: "text-orange-400", bgClass: "bg-orange-500/25", borderClass: "border-orange-500/60" },
-  { id: "moon", label: "Luna", icon: Moon, colorClass: "text-indigo-300", bgClass: "bg-indigo-500/25", borderClass: "border-indigo-500/60" },
-  { id: "sun", label: "Sol", icon: Sun, colorClass: "text-amber-300", bgClass: "bg-amber-500/25", borderClass: "border-amber-500/60" },
-  { id: "sparkles", label: "Estrella", icon: Sparkles, colorClass: "text-teal-300", bgClass: "bg-teal-500/25", borderClass: "border-teal-500/60" },
-  { id: "leaf", label: "Hoja", icon: Leaf, colorClass: "text-emerald-400", bgClass: "bg-emerald-500/25", borderClass: "border-emerald-500/60" },
-  { id: "zap", label: "Rayo", icon: Zap, colorClass: "text-purple-300", bgClass: "bg-purple-500/25", borderClass: "border-purple-500/60" },
+  {
+    id: "flame",
+    label: "Fuego",
+    icon: Flame,
+    colorClass: "text-orange-400",
+    bgClass: "bg-orange-500/25",
+    borderClass: "border-orange-500/60",
+  },
+  {
+    id: "moon",
+    label: "Luna",
+    icon: Moon,
+    colorClass: "text-indigo-300",
+    bgClass: "bg-indigo-500/25",
+    borderClass: "border-indigo-500/60",
+  },
+  {
+    id: "sun",
+    label: "Sol",
+    icon: Sun,
+    colorClass: "text-amber-300",
+    bgClass: "bg-amber-500/25",
+    borderClass: "border-amber-500/60",
+  },
+  {
+    id: "sparkles",
+    label: "Estrella",
+    icon: Sparkles,
+    colorClass: "text-teal-300",
+    bgClass: "bg-teal-500/25",
+    borderClass: "border-teal-500/60",
+  },
+  {
+    id: "leaf",
+    label: "Hoja",
+    icon: Leaf,
+    colorClass: "text-emerald-400",
+    bgClass: "bg-emerald-500/25",
+    borderClass: "border-emerald-500/60",
+  },
+  {
+    id: "zap",
+    label: "Rayo",
+    icon: Zap,
+    colorClass: "text-purple-300",
+    bgClass: "bg-purple-500/25",
+    borderClass: "border-purple-500/60",
+  },
 ];
 
 function crearTablero(pares: number) {
@@ -366,7 +431,10 @@ export function ParejasGame({ registrar }: { registrar: Registrar }) {
               >
                 {isFlipped ? (
                   <div className="flex items-center justify-center transition-all transform scale-100 animate-in fade-in zoom-in duration-200">
-                    <IconComp className={cn("h-7 w-7 sm:h-8 sm:w-8", c.item.colorClass)} strokeWidth={2.2} />
+                    <IconComp
+                      className={cn("h-7 w-7 sm:h-8 sm:w-8", c.item.colorClass)}
+                      strokeWidth={2.2}
+                    />
                   </div>
                 ) : (
                   <HelpCircle className="h-5 w-5 text-muted-foreground/40" />
@@ -399,7 +467,11 @@ export function ParejasGame({ registrar }: { registrar: Registrar }) {
 
 const COLORES_STROOP = [
   { nombre: "ROJO", clase: "text-red-400", bg: "hover:bg-red-500/15 border-red-500/30" },
-  { nombre: "VERDE", clase: "text-emerald-400", bg: "hover:bg-emerald-500/15 border-emerald-500/30" },
+  {
+    nombre: "VERDE",
+    clase: "text-emerald-400",
+    bg: "hover:bg-emerald-500/15 border-emerald-500/30",
+  },
   { nombre: "AZUL", clase: "text-sky-400", bg: "hover:bg-sky-500/15 border-sky-500/30" },
   { nombre: "AMARILLO", clase: "text-amber-300", bg: "hover:bg-amber-500/15 border-amber-500/30" },
 ];
@@ -481,7 +553,12 @@ export function StroopGame({ registrar }: { registrar: Registrar }) {
         <Progress value={(segundos / 45) * 100} className="h-1.5" />
 
         <div className="flex h-28 items-center justify-center rounded-3xl border-2 border-border/80 bg-secondary/40 shadow-inner">
-          <span className={cn("font-display text-4xl sm:text-5xl font-bold tracking-wide", COLORES_STROOP[ronda.tinta]!.clase)}>
+          <span
+            className={cn(
+              "font-display text-4xl sm:text-5xl font-bold tracking-wide",
+              COLORES_STROOP[ronda.tinta]!.clase,
+            )}
+          >
             {COLORES_STROOP[ronda.palabra]!.nombre}
           </span>
         </div>
@@ -623,7 +700,9 @@ export function CalculoGame({ registrar }: { registrar: Registrar }) {
         <Progress value={(segundos / 60) * 100} className="h-1.5" />
 
         <div className="flex h-28 items-center justify-center rounded-3xl border-2 border-border/80 bg-secondary/40 shadow-inner">
-          <span className="font-display text-5xl font-bold tabular-nums text-foreground">{op.texto}</span>
+          <span className="font-display text-5xl font-bold tabular-nums text-foreground">
+            {op.texto}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -634,7 +713,9 @@ export function CalculoGame({ registrar }: { registrar: Registrar }) {
               disabled={!corriendo}
               className={cn(
                 "rounded-2xl border-2 border-border bg-secondary/70 py-3.5 font-display text-2xl font-bold tabular-nums transition-all active:scale-95 shadow-sm",
-                corriendo ? "hover:border-primary hover:bg-primary/10 cursor-pointer" : "opacity-40 cursor-default",
+                corriendo
+                  ? "hover:border-primary hover:bg-primary/10 cursor-pointer"
+                  : "opacity-40 cursor-default",
               )}
             >
               {v}
@@ -665,3 +746,5 @@ export function CalculoGame({ registrar }: { registrar: Registrar }) {
 }
 
 export const MindGamesIcon = Brain;
+
+export { TrainSwitchGame, TrainSwitchGame as TrenesGame } from "./TrainSwitchGame";
