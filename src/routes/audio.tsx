@@ -35,6 +35,7 @@ import { procesarCancionServerFn } from "@/lib/soundtrack.functions";
 import {
   uploadAudioToSupabase,
   eliminarCancionDeSupabase,
+  resolvePlayableUrl,
 } from "@/lib/supabase-soundtrack";
 import { cn } from "@/lib/utils";
 
