@@ -418,11 +418,15 @@ function BandaSonora() {
       }
 
       if (audioRef.current) {
-        audioRef.current.src = s.url_enlace;
-        audioRef.current.volume = isMuted ? 0 : volume;
-        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {
-          toast.error("Error al reproducir el archivo de audio.");
-          setIsPlaying(false);
+        const el = audioRef.current;
+        // El bucket es privado: se firma la URL justo antes de reproducir
+        void resolvePlayableUrl(s.url_enlace).then((playableUrl) => {
+          el.src = playableUrl;
+          el.volume = isMuted ? 0 : volume;
+          el.play().then(() => setIsPlaying(true)).catch(() => {
+            toast.error("Error al reproducir el archivo de audio.");
+            setIsPlaying(false);
+          });
         });
       }
     }
