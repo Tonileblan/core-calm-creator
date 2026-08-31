@@ -139,6 +139,41 @@ export async function procesarYGuardarCancion({
 }
 
 /**
+ * Extrae bucket y ruta de una URL de Supabase Storage (formato público o firmado)
+ */
+function parseStorageRef(url: string): { bucket: string; path: string } | null {
+  const marker = url.includes("/storage/v1/object/public/")
+    ? "/storage/v1/object/public/"
+    : url.includes("/storage/v1/object/sign/")
+      ? "/storage/v1/object/sign/"
+      : null;
+  if (!marker) return null;
+  const rest = url.split(marker)[1];
+  if (!rest) return null;
+  const clean = rest.split("?")[0] ?? rest;
+  const slashIndex = clean.indexOf("/");
+  if (slashIndex < 1) return null;
+  return {
+    bucket: clean.substring(0, slashIndex),
+    path: decodeURIComponent(clean.substring(slashIndex + 1)),
+  };
+}
+
+/**
+ * El bucket es privado: genera una URL firmada temporal para reproducir/descargar.
+ * Si no es un archivo de Supabase Storage, devuelve la URL original.
+ */
+export async function resolvePlayableUrl(url: string, expiresIn = 3600): Promise<string> {
+  const ref = parseStorageRef(url);
+  if (!ref) return url;
+  const { data, error } = await supabase.storage
+    .from(ref.bucket)
+    .createSignedUrl(ref.path, expiresIn);
+  if (error || !data?.signedUrl) return url;
+  return data.signedUrl;
+}
+
+/**
  * Elimina una canción de Supabase (registro y archivo si está en Supabase Storage)
  */
 export async function eliminarCancionDeSupabase(id: string, urlEnlace?: string): Promise<void> {
