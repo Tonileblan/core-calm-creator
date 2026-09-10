@@ -557,13 +557,13 @@ export class AudioEngine {
     if (typeof window === "undefined") return;
     if (!this.trackAudioEl) {
       const audio = document.createElement("audio");
+      audio.id = "flowmind-track-player";
       audio.setAttribute("playsinline", "true");
       audio.setAttribute("webkit-playsinline", "true");
       audio.setAttribute("x-webkit-airplay", "allow");
       audio.setAttribute("preload", "auto");
       (audio as any).playsInline = true;
-      audio.crossOrigin = "anonymous";
-      audio.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
+      audio.volume = this.trackState.isMuted ? 0 : this.trackState.volume;
       audio.style.position = "fixed";
       audio.style.bottom = "0";
       audio.style.left = "0";
@@ -626,6 +626,13 @@ export class AudioEngine {
           console.warn("Audio element error on src:", audio.src, audio.error, e);
           const currentSession = this.playSessionId;
           const currentTrack = this.activeTrack;
+          // Fallback automático de formato si es un recurso local
+          if (audio.src.endsWith(".m4a")) {
+            const fallback = audio.src.replace(/\.m4a$/, ".wav");
+            audio.src = fallback;
+            void audio.play().catch(() => {});
+            return;
+          }
           if (!audio.src.includes("token=")) {
             void resolvePlayableUrl(currentTrack.url, currentTrack.id).then((signedUrl) => {
               if (this.playSessionId === currentSession && signedUrl && signedUrl !== audio.src) {
@@ -944,6 +951,9 @@ export class AudioEngine {
       } catch {}
     } else if (this.trackAudioEl) {
       try {
+        if (!this.trackAudioEl.src && this.activeTrack) {
+          this.trackAudioEl.src = resolvePlayableUrlSync(this.activeTrack.url) || this.activeTrack.url;
+        }
         await this.trackAudioEl.play();
         this.trackState.isPlaying = true;
         this.emitTrackState();
