@@ -256,7 +256,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "despertar",
     descripcion: "Frecuencia acústica suave para iniciar el día con vitalidad y enfoque claro.",
-    url: "https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3",
+    url: "/audio/amanecer.wav",
   },
   {
     id: "plantilla-celebrar",
@@ -264,7 +264,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "celebrar",
     descripcion: "Acordes optimistas para anclar momentos de gratitud, progreso y éxito.",
-    url: "https://assets.mixkit.co/music/preview/mixkit-sun-and-sky-578.mp3",
+    url: "/audio/triunfo.wav",
   },
   {
     id: "plantilla-relajacion",
@@ -272,7 +272,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "relajacion",
     descripcion: "Paisaje sonoro orgánico para meditación, respiración y paz mental.",
-    url: "https://assets.mixkit.co/music/preview/mixkit-deep-urban-623.mp3",
+    url: "/audio/calma.wav",
   },
   {
     id: "plantilla-dormir",
@@ -280,7 +280,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "dormir",
     descripcion: "Texturas envolventes para desacelerar la mente e inducir un sueño profundo.",
-    url: "https://assets.mixkit.co/music/preview/mixkit-sleepy-cat-135.mp3",
+    url: "/audio/oceano.wav",
   },
 ];
 

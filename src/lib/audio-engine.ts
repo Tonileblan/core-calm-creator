@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { resolvePlayableUrlSync, resolvePlayableUrl } from "./supabase-soundtrack";
+import { isYouTubeUrl } from "./youtube-audio";
 
 export type SoundId =
   | "alpha"
@@ -656,7 +657,7 @@ export class AudioEngine {
         console.warn("Audio element error on src:", audio.src, audio.error, e);
         // Si hay error en la fuente directa, intentar resolver URL firmada automáticamente
         if (this.activeTrack && !audio.src.includes("token=")) {
-          void resolvePlayableUrl(this.activeTrack.url).then((signedUrl) => {
+          void resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id).then((signedUrl) => {
             if (signedUrl && signedUrl !== audio.src) {
               audio.src = signedUrl;
               void audio.play().catch((err) => {
@@ -736,8 +737,21 @@ export class AudioEngine {
     // Configurar MediaSession directamente para la canción
     this.setupTrackMediaSession(track);
 
-    // 1. Obtener URL reproducible (síncrona para inicio instantáneo)
-    const initialUrl = resolvePlayableUrlSync(track.url);
+    // 1. Obtener URL reproducible
+    let initialUrl = resolvePlayableUrlSync(track.url);
+
+    // Si es un enlace de YouTube que no se ha descargado a Supabase Storage, resolver a través del servidor
+    if (isYouTubeUrl(track.url)) {
+      try {
+        const resolved = await resolvePlayableUrl(track.url, track.id);
+        if (resolved && !isYouTubeUrl(resolved)) {
+          initialUrl = resolved;
+        }
+      } catch (e) {
+        console.warn("Error resolviendo URL de YouTube:", e);
+      }
+    }
+
     this.trackAudioEl.src = initialUrl;
     this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
     this.trackAudioEl.currentTime = 0;
@@ -754,7 +768,7 @@ export class AudioEngine {
       console.warn("Fallo reproducción inicial, resolviendo URL autorizada de Supabase...", err);
 
       try {
-        const signedUrl = await resolvePlayableUrl(track.url);
+        const signedUrl = await resolvePlayableUrl(track.url, track.id);
         if (signedUrl && signedUrl !== this.trackAudioEl.src) {
           this.trackAudioEl.src = signedUrl;
           await this.trackAudioEl.play();
@@ -801,7 +815,7 @@ export class AudioEngine {
       // Reintentar con URL firmada
       if (this.activeTrack) {
         try {
-          const signedUrl = await resolvePlayableUrl(this.activeTrack.url);
+          const signedUrl = await resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id);
           if (signedUrl && signedUrl !== this.trackAudioEl.src) {
             this.trackAudioEl.src = signedUrl;
             await this.trackAudioEl.play();

@@ -20,6 +20,59 @@ export const obtenerMetadataYouTubeServerFn = createServerFn({ method: "POST" })
   });
 
 /**
+ * Resuelve una URL reproducible para cualquier canción.
+ * Si la canción contiene una URL de YouTube legacy o no descargada,
+ * el servidor descarga el audio, lo almacena en Supabase Storage y actualiza la fila.
+ */
+export const resolverUrlAudioServerFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id?: string | undefined; url: string }) => input)
+  .handler(async ({ data, context }) => {
+    const { id, url } = data;
+    const videoId = extractYouTubeVideoId(url);
+
+    if (videoId) {
+      try {
+        const result = await downloadYouTubeAudioBuffer(url);
+        const cleanName = (result.title || `audio_${videoId}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+        const fileName = `${context.userId}/${Date.now()}_${cleanName}.${result.extension}`;
+
+        const upRes = await context.supabase.storage
+          .from(BUCKET_NAME)
+          .upload(fileName, result.buffer, {
+            contentType: result.mimeType,
+            cacheControl: "3600",
+            upsert: true,
+          });
+
+        if (!upRes.error && upRes.data) {
+          const { data: pub } = context.supabase.storage.from(BUCKET_NAME).getPublicUrl(upRes.data.path);
+          const finalUrl = pub.publicUrl;
+
+          // Si se proporcionó ID de canción, actualizar el registro en la base de datos
+          if (id) {
+            await context.supabase
+              .from("vital_soundtrack")
+              .update({ url_enlace: finalUrl })
+              .eq("id", id);
+          }
+
+          // Generar URL firmada inmediata para reproducción fluida
+          const { data: signData } = await context.supabase.storage
+            .from(BUCKET_NAME)
+            .createSignedUrl(upRes.data.path, 7200);
+
+          return { playableUrl: signData?.signedUrl || finalUrl };
+        }
+      } catch (err) {
+        console.warn("No se pudo migrar audio de YouTube en servidor:", err);
+      }
+    }
+
+    return { playableUrl: url };
+  });
+
+/**
  * Función de servidor para procesar y descargar audio/video de YouTube directamente a Supabase Storage
  */
 export const procesarCancionServerFn = createServerFn({ method: "POST" })
@@ -50,7 +103,7 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
         const cleanName = (nombre || `audio_${videoId}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
         const fileName = `${context.userId}/${Date.now()}_${cleanName}.${result.extension}`;
 
-        // Subir con el cliente autenticado del usuario (o admin si estuviera configurado)
+        // Subir con el cliente autenticado del usuario
         let uploadData: { path: string } | null = null;
         let uploadErr: any = null;
 
@@ -85,17 +138,7 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
           finalAudioUrl = pub.publicUrl;
         }
       } catch (err: any) {
-        // YouTube puede bloquear la descarga desde el servidor: guardamos el enlace
-        // original para que la canción quede registrada y sea reproducible por enlace.
-        console.warn("Descarga de YouTube no disponible, se guarda el enlace:", err?.message);
-        if (!nombre || !artista) {
-          const meta = await getYouTubeMetadata(url);
-          if (meta) {
-            if (!nombre) nombre = meta.title;
-            if (!artista && meta.author) artista = meta.author;
-          }
-        }
-        finalAudioUrl = url.trim();
+        throw new Error(err.message || "No se pudo procesar el video de YouTube.");
       }
     } else if (url.startsWith("http://") || url.startsWith("https://")) {
       // Si es un enlace de audio directo (ej. MP3 o WAV), intentar descargarlo al storage para independencia total

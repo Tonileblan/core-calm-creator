@@ -5,6 +5,7 @@ import {
   isYouTubeUrl,
   extractYouTubeVideoId,
 } from "./youtube-audio";
+import { resolverUrlAudioServerFn } from "./soundtrack.functions";
 
 export const BUCKET_NAME = "soundtrack";
 
@@ -172,10 +173,14 @@ export function resolvePlayableUrlSync(url: string): string {
   if (!url) return "";
   const trimmed = url.trim();
 
-  // Si es un enlace de YouTube que pudiera haber quedado en la DB de versiones antiguas
-  const ytId = extractYouTubeVideoId(trimmed);
-  if (ytId) {
-    return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
+  // Si es un audio local bundled en la app
+  if (trimmed.startsWith("/") || trimmed.startsWith("./")) {
+    return trimmed;
+  }
+
+  // Si es una URL externa directa de audio o Supabase
+  if (!isYouTubeUrl(trimmed)) {
+    return trimmed;
   }
 
   return trimmed;
@@ -183,19 +188,32 @@ export function resolvePlayableUrlSync(url: string): string {
 
 /**
  * Resuelve una URL reproducible 100% válida.
- * Si es de Supabase Storage, genera una URL firmada autorizada para saltar cualquier restricción de RLS.
+ * 1. Si es audio local bundled (/audio/...), se reproduce inmediatamente.
+ * 2. Si es de Supabase Storage, genera una URL firmada autorizada para saltar cualquier restricción de RLS.
+ * 3. Si es un enlace de YouTube que no se había procesado, el servidor lo descarga y lo migra automáticamente a Supabase Storage.
  */
-export async function resolvePlayableUrl(url: string, expiresIn = 7200): Promise<string> {
+export async function resolvePlayableUrl(url: string, trackId?: string, expiresIn = 7200): Promise<string> {
   if (!url) return "";
   const trimmed = url.trim();
 
-  // Si es YouTube legacy
-  const ytId = extractYouTubeVideoId(trimmed);
-  if (ytId) {
-    return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
+  // 1. Audio local
+  if (trimmed.startsWith("/") || trimmed.startsWith("./")) {
+    return trimmed;
   }
 
-  // Si es de Supabase Storage, generar URL firmada autorizada
+  // 2. Si es YouTube legacy no procesado, migrar a Supabase Storage automáticamente
+  if (isYouTubeUrl(trimmed)) {
+    try {
+      const res = await resolverUrlAudioServerFn({ data: { id: trackId, url: trimmed } });
+      if (res?.playableUrl && !isYouTubeUrl(res.playableUrl)) {
+        return res.playableUrl;
+      }
+    } catch (e) {
+      console.warn("No se pudo migrar URL de YouTube:", e);
+    }
+  }
+
+  // 3. Si es de Supabase Storage, generar URL firmada autorizada
   const ref = parseStorageRef(trimmed);
   if (ref) {
     try {
