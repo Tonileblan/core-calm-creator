@@ -172,6 +172,7 @@ export class AudioEngine {
   private ytTicker: number | null = null;
   private isYtMode = false;
   private playSessionId = 0;
+  private isUserInitiatedPause = false;
 
   private activeTrack: TrackInfo | null = null;
   private trackListeners: Set<(state: TrackPlayerState) => void> = new Set();
@@ -188,7 +189,6 @@ export class AudioEngine {
   private alarmInterval: number | null = null;
 
   private bgKeeperAudioEl: HTMLAudioElement | null = null;
-  private streamAudioEl: HTMLAudioElement | null = null;
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -199,13 +199,12 @@ export class AudioEngine {
           }
           this.startBackgroundKeeper();
         }
-        if (this.trackState.isPlaying) {
+        if (this.trackState.isPlaying && !this.isUserInitiatedPause) {
           if (this.isYtMode && this.ytPlayer?.playVideo) {
             try { this.ytPlayer.playVideo(); } catch {}
           } else if (this.trackAudioEl && this.trackAudioEl.paused && this.trackAudioEl.src) {
             void this.trackAudioEl.play().catch(() => {});
           }
-          this.startBackgroundKeeper();
         }
       };
 
@@ -277,33 +276,6 @@ export class AudioEngine {
       this.master = this.ctx.createGain();
       this.master.gain.value = this._volume;
       this.master.connect(this.ctx.destination);
-
-      // Puente MediaStreamDestination para que iOS trate el Web Audio como streaming de medios
-      if (typeof (this.ctx as any).createMediaStreamDestination === "function") {
-        try {
-          const streamDest = (this.ctx as any).createMediaStreamDestination();
-          this.master.connect(streamDest);
-          if (!this.streamAudioEl) {
-            const streamAudio = document.createElement("audio");
-            streamAudio.setAttribute("playsinline", "true");
-            streamAudio.setAttribute("webkit-playsinline", "true");
-            (streamAudio as any).playsInline = true;
-            streamAudio.autoplay = true;
-            streamAudio.srcObject = streamDest.stream;
-            streamAudio.style.position = "fixed";
-            streamAudio.style.bottom = "0";
-            streamAudio.style.left = "0";
-            streamAudio.style.width = "1px";
-            streamAudio.style.height = "1px";
-            streamAudio.style.opacity = "0.01";
-            streamAudio.style.pointerEvents = "none";
-            streamAudio.style.zIndex = "-999";
-            document.body.appendChild(streamAudio);
-            this.streamAudioEl = streamAudio;
-            void streamAudio.play().catch(() => {});
-          }
-        } catch {}
-      }
     }
     if (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted") {
       void this.ctx.resume();
@@ -590,6 +562,7 @@ export class AudioEngine {
       audio.setAttribute("x-webkit-airplay", "allow");
       audio.setAttribute("preload", "auto");
       (audio as any).playsInline = true;
+      audio.crossOrigin = "anonymous";
       audio.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
       audio.style.position = "fixed";
       audio.style.bottom = "0";
@@ -617,7 +590,7 @@ export class AudioEngine {
       audio.addEventListener("play", () => {
         if (!this.isYtMode && this.activeTrack) {
           this.trackState.isPlaying = true;
-          this.startBackgroundKeeper();
+          this.isUserInitiatedPause = false;
           if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
             try { navigator.mediaSession.playbackState = "playing"; } catch {}
           }
@@ -626,6 +599,12 @@ export class AudioEngine {
       });
       audio.addEventListener("pause", () => {
         if (!this.isYtMode && this.activeTrack) {
+          // Si no fue una pausa intencionada del usuario y no ha terminado la pista (ej. transición a segundo plano en iOS)
+          if (!this.isUserInitiatedPause && !audio.ended && this.trackState.isPlaying) {
+            // Reanudar inmediatamente en segundo plano en iOS
+            void audio.play().catch(() => {});
+            return;
+          }
           this.trackState.isPlaying = false;
           if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
             try { navigator.mediaSession.playbackState = "paused"; } catch {}
@@ -636,7 +615,6 @@ export class AudioEngine {
       audio.addEventListener("ended", () => {
         if (!this.isYtMode) {
           this.trackState.isPlaying = false;
-          this.stopBackgroundKeeper();
           if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
             try { navigator.mediaSession.playbackState = "none"; } catch {}
           }
@@ -820,12 +798,16 @@ export class AudioEngine {
 
     // Nueva reproducción: incrementar ID de sesión para invalidar callbacks previos
     const currentSession = ++this.playSessionId;
+    this.isUserInitiatedPause = false;
 
     // Detener cualquier síntesis o alarma activa
     if (this._playing) {
       this.stop(0.2);
     }
     this.stopAlarm();
+
+    // Detener el guardián silencioso para no crear conflicto de doble audio en iOS
+    this.stopBackgroundKeeper();
 
     // Detener cualquier reproducción previa inmediatamente
     if (this.trackAudioEl) {
@@ -845,7 +827,6 @@ export class AudioEngine {
     this.emitTrackState();
 
     this.setupTrackMediaSession(track);
-    this.startBackgroundKeeper();
 
     const isYt = isYouTubeUrl(track.url);
     const directUrl = resolvePlayableUrlSync(track.url);
@@ -935,6 +916,7 @@ export class AudioEngine {
   }
 
   pauseTrack() {
+    this.isUserInitiatedPause = true;
     if (this.isYtMode && this.ytPlayer?.pauseVideo) {
       try { this.ytPlayer.pauseVideo(); } catch {}
       this.stopYtTicker();
@@ -949,10 +931,10 @@ export class AudioEngine {
   }
 
   async resumeTrack() {
+    this.isUserInitiatedPause = false;
     if (this.activeTrack) {
       this.setupTrackMediaSession(this.activeTrack);
     }
-    this.startBackgroundKeeper();
     if (this.isYtMode && this.ytPlayer?.playVideo) {
       try {
         this.ytPlayer.playVideo();
@@ -973,6 +955,7 @@ export class AudioEngine {
 
   stopTrack() {
     this.playSessionId++;
+    this.isUserInitiatedPause = true;
     this.stopBackgroundKeeper();
     if (this.isYtMode && this.ytPlayer?.stopVideo) {
       try { this.ytPlayer.stopVideo(); } catch {}
