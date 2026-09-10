@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { resolvePlayableUrl } from "./supabase-soundtrack";
+import { resolvePlayableUrlSync, resolvePlayableUrl } from "./supabase-soundtrack";
 
 export type SoundId =
   | "alpha"
@@ -569,7 +569,7 @@ export class AudioEngine {
 
   /**
    * Asegura que el elemento <audio> para canciones de Banda Sonora esté presente en el DOM
-   * configurado con playsinline y crossOrigin para reproducción ininterrumpida en segundo plano.
+   * configurado con playsinline para reproducción ininterrumpida en segundo plano.
    */
   private ensureTrackAudioElement() {
     if (typeof window === "undefined") return;
@@ -579,7 +579,7 @@ export class AudioEngine {
       audio.setAttribute("webkit-playsinline", "true");
       audio.setAttribute("preload", "auto");
       (audio as any).playsInline = true;
-      audio.crossOrigin = "anonymous";
+      // No configurar crossOrigin="anonymous" para evitar que bloquee servidores sin headers CORS
       audio.volume = this.trackState.volume;
       audio.style.position = "fixed";
       audio.style.opacity = "0";
@@ -607,7 +607,8 @@ export class AudioEngine {
         this.trackState.isPlaying = false;
         this.emitTrackState();
       });
-      audio.addEventListener("error", () => {
+      audio.addEventListener("error", (e) => {
+        console.warn("Audio element error:", audio.error, e);
         this.trackState.isPlaying = false;
         this.emitTrackState();
       });
@@ -665,12 +666,12 @@ export class AudioEngine {
     this.trackState.track = track;
     this.trackState.currentTime = 0;
     this.trackState.duration = 0;
+    this.trackState.isPlaying = true;
     this.emitTrackState();
 
-    // Resolver URL directa reproducible desde Supabase Storage o stream de audio directo
-    const playableUrl = await resolvePlayableUrl(track.url);
-
-    this.trackAudioEl.src = playableUrl;
+    // 1. Resolver URL inmediata síncrona para no perder el contexto de interacción del usuario
+    const initialUrl = resolvePlayableUrlSync(track.url);
+    this.trackAudioEl.src = initialUrl;
     this.trackAudioEl.volume = this.trackState.isMuted ? 0 : this.trackState.volume;
     this.trackAudioEl.currentTime = 0;
 
@@ -683,12 +684,34 @@ export class AudioEngine {
       () => { this.stopTrack(); }
     );
 
+    // 2. Iniciar reproducción inmediatamente
     try {
-      await this.trackAudioEl.play();
+      const playPromise = this.trackAudioEl.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
       this.trackState.isPlaying = true;
       this.emitTrackState();
-    } catch (err) {
-      console.warn("Error al reproducir pista de audio:", err);
+    } catch (err: any) {
+      console.warn("Intento de reproducción directa:", err);
+
+      // Si falló (por ejemplo, requiere URL firmada de Supabase Storage), resolver URL firmada y reintentar
+      try {
+        const signedUrl = await resolvePlayableUrl(track.url);
+        if (signedUrl && signedUrl !== initialUrl) {
+          this.trackAudioEl.src = signedUrl;
+          await this.trackAudioEl.play();
+          this.trackState.isPlaying = true;
+          this.emitTrackState();
+        } else {
+          this.trackState.isPlaying = false;
+          this.emitTrackState();
+        }
+      } catch (retryErr) {
+        console.warn("Fallo definitivo al reproducir audio:", retryErr);
+        this.trackState.isPlaying = false;
+        this.emitTrackState();
+      }
     }
   }
 

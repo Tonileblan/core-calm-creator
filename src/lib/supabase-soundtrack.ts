@@ -160,17 +160,51 @@ function parseStorageRef(url: string): { bucket: string; path: string } | null {
 }
 
 /**
- * El bucket es privado: genera una URL firmada temporal para reproducir/descargar.
- * Si no es un archivo de Supabase Storage, devuelve la URL original.
+ * Resuelve síncronamente una URL reproducible inmediata sin pausas de red (para no perder el gesto de usuario en móviles).
+ */
+export function resolvePlayableUrlSync(url: string): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+
+  // Si es un enlace de YouTube que pudiera haber quedado en la DB
+  const ytId = extractYouTubeVideoId(trimmed);
+  if (ytId) {
+    return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Resuelve una URL reproducible (firmada de Supabase Storage si es privado, o directa si es pública).
  */
 export async function resolvePlayableUrl(url: string, expiresIn = 3600): Promise<string> {
-  const ref = parseStorageRef(url);
-  if (!ref) return url;
-  const { data, error } = await supabase.storage
-    .from(ref.bucket)
-    .createSignedUrl(ref.path, expiresIn);
-  if (error || !data?.signedUrl) return url;
-  return data.signedUrl;
+  if (!url) return "";
+  const trimmed = url.trim();
+
+  // Si es YouTube legacy
+  const ytId = extractYouTubeVideoId(trimmed);
+  if (ytId) {
+    return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
+  }
+
+  // Si es pública de Supabase o URL externa directa, no requiere firma
+  if (trimmed.includes("/storage/v1/object/public/") || !trimmed.includes("supabase.co")) {
+    return trimmed;
+  }
+
+  const ref = parseStorageRef(trimmed);
+  if (!ref) return trimmed;
+
+  try {
+    const { data, error } = await supabase.storage
+      .from(ref.bucket)
+      .createSignedUrl(ref.path, expiresIn);
+    if (error || !data?.signedUrl) return trimmed;
+    return data.signedUrl;
+  } catch {
+    return trimmed;
+  }
 }
 
 /**
