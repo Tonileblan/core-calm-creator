@@ -171,6 +171,7 @@ export class AudioEngine {
   private ytPlayer: any = null;
   private ytTicker: number | null = null;
   private isYtMode = false;
+  private playSessionId = 0;
 
   private activeTrack: TrackInfo | null = null;
   private trackListeners: Set<(state: TrackPlayerState) => void> = new Set();
@@ -203,10 +204,13 @@ export class AudioEngine {
         }
       };
 
-      document.addEventListener("visibilitychange", resumeIfActive);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          resumeIfActive();
+        }
+      });
       window.addEventListener("focus", resumeIfActive);
       window.addEventListener("pageshow", resumeIfActive);
-      window.addEventListener("touchend", resumeIfActive, { passive: true });
     }
   }
 
@@ -468,25 +472,25 @@ export class AudioEngine {
       audio.style.right = "0";
 
       audio.addEventListener("timeupdate", () => {
-        if (!this.isYtMode) {
+        if (!this.isYtMode && this.activeTrack) {
           this.trackState.currentTime = audio.currentTime || 0;
           this.emitTrackState();
         }
       });
       audio.addEventListener("loadedmetadata", () => {
-        if (!this.isYtMode) {
+        if (!this.isYtMode && this.activeTrack) {
           this.trackState.duration = audio.duration || 0;
           this.emitTrackState();
         }
       });
       audio.addEventListener("play", () => {
-        if (!this.isYtMode) {
+        if (!this.isYtMode && this.activeTrack) {
           this.trackState.isPlaying = true;
           this.emitTrackState();
         }
       });
       audio.addEventListener("pause", () => {
-        if (!this.isYtMode) {
+        if (!this.isYtMode && this.activeTrack) {
           this.trackState.isPlaying = false;
           this.emitTrackState();
         }
@@ -498,15 +502,19 @@ export class AudioEngine {
         }
       });
       audio.addEventListener("error", (e) => {
-        if (!this.isYtMode) {
+        if (!this.isYtMode && this.activeTrack && audio.src) {
           console.warn("Audio element error on src:", audio.src, audio.error, e);
-          if (this.activeTrack && !audio.src.includes("token=")) {
-            void resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id).then((signedUrl) => {
-              if (signedUrl && signedUrl !== audio.src) {
+          const currentSession = this.playSessionId;
+          const currentTrack = this.activeTrack;
+          if (!audio.src.includes("token=")) {
+            void resolvePlayableUrl(currentTrack.url, currentTrack.id).then((signedUrl) => {
+              if (this.playSessionId === currentSession && signedUrl && signedUrl !== audio.src) {
                 audio.src = signedUrl;
                 void audio.play().catch(() => {
-                  this.trackState.isPlaying = false;
-                  this.emitTrackState();
+                  if (this.playSessionId === currentSession) {
+                    this.trackState.isPlaying = false;
+                    this.emitTrackState();
+                  }
                 });
               }
             });
@@ -520,7 +528,7 @@ export class AudioEngine {
   }
 
   /**
-   * Inicializa el reproductor de YouTube oficial en segundo plano (para videos protegidos por Vevo/sellos)
+   * Inicializa el reproductor de YouTube oficial en segundo plano
    */
   private async ensureYouTubePlayer(): Promise<any> {
     if (typeof window === "undefined") return null;
@@ -552,52 +560,56 @@ export class AudioEngine {
         return resolve(null);
       }
 
-      this.ytPlayer = new window.YT.Player("flowmind-yt-target-iframe", {
-        height: "1",
-        width: "1",
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          disablekb: 1,
-          fs: 0,
-          playsinline: 1,
-          rel: 0,
-        },
-        events: {
-          onReady: () => {
-            resolve(this.ytPlayer);
+      try {
+        this.ytPlayer = new window.YT.Player("flowmind-yt-target-iframe", {
+          height: "1",
+          width: "1",
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            disablekb: 1,
+            fs: 0,
+            playsinline: 1,
+            rel: 0,
           },
-          onStateChange: (event: any) => {
-            if (!this.isYtMode) return;
-            const state = event.data;
-            if (state === 1) {
-              // Playing
-              this.trackState.isPlaying = true;
-              this.trackState.duration = this.ytPlayer.getDuration() || this.trackState.duration;
-              this.startYtTicker();
-              this.emitTrackState();
-            } else if (state === 2) {
-              // Paused
-              this.trackState.isPlaying = false;
-              this.stopYtTicker();
-              this.emitTrackState();
-            } else if (state === 0) {
-              // Ended
-              this.trackState.isPlaying = false;
-              this.stopYtTicker();
-              this.emitTrackState();
-            }
+          events: {
+            onReady: () => {
+              resolve(this.ytPlayer);
+            },
+            onStateChange: (event: any) => {
+              if (!this.isYtMode) return;
+              const state = event.data;
+              if (state === 1) {
+                // Playing
+                this.trackState.isPlaying = true;
+                this.trackState.duration = this.ytPlayer.getDuration() || this.trackState.duration;
+                this.startYtTicker();
+                this.emitTrackState();
+              } else if (state === 2) {
+                // Paused
+                this.trackState.isPlaying = false;
+                this.stopYtTicker();
+                this.emitTrackState();
+              } else if (state === 0) {
+                // Ended
+                this.trackState.isPlaying = false;
+                this.stopYtTicker();
+                this.emitTrackState();
+              }
+            },
+            onError: (e: any) => {
+              console.warn("YouTube iframe player error:", e);
+              if (this.isYtMode) {
+                this.trackState.isPlaying = false;
+                this.stopYtTicker();
+                this.emitTrackState();
+              }
+            },
           },
-          onError: (e: any) => {
-            console.warn("YouTube iframe player error:", e);
-            if (this.isYtMode) {
-              this.trackState.isPlaying = false;
-              this.stopYtTicker();
-              this.emitTrackState();
-            }
-          },
-        },
-      });
+        });
+      } catch {
+        resolve(null);
+      }
     });
   }
 
@@ -645,10 +657,17 @@ export class AudioEngine {
   }
 
   /**
-   * Reproduce una pista (sea audio nativo de Supabase, local o YouTube directo)
+   * Reproduce una pista (sea audio nativo de Supabase, local o YouTube) de manera
+   * 100% síncrona e inmediata, con single-flight session ID para evitar condiciones de carrera.
    */
   async playTrack(track: TrackInfo) {
-    if (this.activeTrack?.id === track.id) {
+    // Si se pulsa la misma pista que ya está seleccionada: toggle play / pause
+    const isSameTrack =
+      this.activeTrack &&
+      (this.activeTrack.id === track.id ||
+        (this.activeTrack.url && this.activeTrack.url === track.url));
+
+    if (isSameTrack) {
       if (this.trackState.isPlaying) {
         this.pauseTrack();
       } else {
@@ -657,11 +676,25 @@ export class AudioEngine {
       return;
     }
 
+    // Nueva reproducción: incrementar ID de sesión para invalidar callbacks previos
+    const currentSession = ++this.playSessionId;
+
+    // Detener cualquier síntesis o alarma activa
     if (this._playing) {
       this.stop(0.2);
     }
     this.stopAlarm();
 
+    // Detener cualquier reproducción previa inmediatamente
+    if (this.trackAudioEl) {
+      this.trackAudioEl.pause();
+    }
+    if (this.ytPlayer?.pauseVideo) {
+      try { this.ytPlayer.pauseVideo(); } catch {}
+    }
+    this.stopYtTicker();
+
+    // Establecer estado activo
     this.activeTrack = track;
     this.trackState.track = track;
     this.trackState.currentTime = 0;
@@ -673,39 +706,69 @@ export class AudioEngine {
 
     const isYt = isYouTubeUrl(track.url);
 
-    if (isYt) {
-      // 1. Intentar resolver URL de Supabase previamente descargada
-      let resolvedAudioUrl = "";
-      try {
-        const resolved = await resolvePlayableUrl(track.url, track.id);
-        if (resolved && !isYouTubeUrl(resolved)) {
-          resolvedAudioUrl = resolved;
-        }
-      } catch {}
+    if (!isYt) {
+      // ── CASO A: PISTA NATIVA / SUPABASE / LOCAL / MP3 / WAV ──
+      // Modo nativo directo: se reproduce de forma 100% síncrona e inmediata en el tick del click
+      this.isYtMode = false;
+      this.ensureTrackAudioElement();
+      if (!this.trackAudioEl) return;
 
-      if (resolvedAudioUrl) {
-        // Reproducir vía HTML5 Audio nativo
-        this.isYtMode = false;
-        if (this.ytPlayer?.pauseVideo) {
-          try { this.ytPlayer.pauseVideo(); } catch {}
+      const directUrl = resolvePlayableUrlSync(track.url);
+      this.trackAudioEl.src = directUrl;
+      this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
+      this.trackAudioEl.currentTime = 0;
+
+      try {
+        const playPromise = this.trackAudioEl.play();
+        if (playPromise !== undefined) {
+          await playPromise;
         }
+        if (this.playSessionId === currentSession) {
+          this.trackState.isPlaying = true;
+          this.emitTrackState();
+        }
+      } catch (err) {
+        // Si la URL directa falla (ej. si requiere URL firmada de Supabase)
+        if (this.playSessionId !== currentSession) return;
+        console.warn("Fallo reproducción directa, intentando resolución firmada...", err);
+        try {
+          const resolved = await resolvePlayableUrl(track.url, track.id);
+          if (this.playSessionId === currentSession && resolved && this.trackAudioEl) {
+            this.trackAudioEl.src = resolved;
+            await this.trackAudioEl.play();
+            this.trackState.isPlaying = true;
+            this.emitTrackState();
+          }
+        } catch (resErr) {
+          if (this.playSessionId === currentSession) {
+            this.trackState.isPlaying = false;
+            this.emitTrackState();
+          }
+        }
+      }
+    } else {
+      // ── CASO B: ENLACE YOUTUBE ──
+      // Primero verificar si ya hay una versión procesada o descargada en Supabase
+      const syncResolved = resolvePlayableUrlSync(track.url);
+      if (syncResolved && !isYouTubeUrl(syncResolved)) {
+        this.isYtMode = false;
         this.ensureTrackAudioElement();
         if (this.trackAudioEl) {
-          this.trackAudioEl.src = resolvedAudioUrl;
+          this.trackAudioEl.src = syncResolved;
           this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
           this.trackAudioEl.currentTime = 0;
           try {
             await this.trackAudioEl.play();
-            this.trackState.isPlaying = true;
-            this.emitTrackState();
-            return;
-          } catch (e) {
-            console.warn("Fallo audio nativo, activando puente de YouTube oficial...", e);
-          }
+            if (this.playSessionId === currentSession) {
+              this.trackState.isPlaying = true;
+              this.emitTrackState();
+              return;
+            }
+          } catch {}
         }
       }
 
-      // 2. Si no es archivo directo o falla, reproducir a través del puente oficial de YouTube (100% garantizado)
+      // Si aún no está en Supabase, activar el puente IFrame oficial
       this.isYtMode = true;
       if (this.trackAudioEl) {
         this.trackAudioEl.pause();
@@ -715,44 +778,32 @@ export class AudioEngine {
       const videoId = extractYouTubeVideoId(track.url);
       if (videoId) {
         const player = await this.ensureYouTubePlayer();
+        if (this.playSessionId !== currentSession) return;
+
         if (player) {
           try {
             player.setVolume((this.trackState.isMuted ? 0 : this.trackState.volume) * 100);
-            player.loadVideoById(videoId);
-            player.playVideo();
+            if (typeof player.loadVideoById === "function") {
+              player.loadVideoById(videoId);
+              player.playVideo();
+            } else if (typeof player.cueVideoById === "function") {
+              player.cueVideoById(videoId);
+              player.playVideo();
+            }
             this.trackState.isPlaying = true;
             this.startYtTicker();
             this.emitTrackState();
-            return;
           } catch (e) {
             console.warn("Error en reproducción YouTube IFrame:", e);
           }
         }
-      }
-    } else {
-      // Pista directa (Supabase Storage, local /audio/..., MP3, WAV)
-      this.isYtMode = false;
-      this.stopYtTicker();
-      if (this.ytPlayer?.pauseVideo) {
-        try { this.ytPlayer.pauseVideo(); } catch {}
-      }
 
-      this.ensureTrackAudioElement();
-      if (!this.trackAudioEl) return;
-
-      const playableUrl = await resolvePlayableUrl(track.url, track.id);
-      this.trackAudioEl.src = playableUrl || track.url;
-      this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
-      this.trackAudioEl.currentTime = 0;
-
-      try {
-        await this.trackAudioEl.play();
-        this.trackState.isPlaying = true;
-        this.emitTrackState();
-      } catch (err) {
-        console.warn("Error al reproducir audio nativo:", err);
-        this.trackState.isPlaying = false;
-        this.emitTrackState();
+        // En segundo plano, migrar a Supabase Storage para que las siguientes reproducciones sean nativas
+        void resolvePlayableUrl(track.url, track.id).then((savedUrl) => {
+          if (savedUrl && !isYouTubeUrl(savedUrl) && track) {
+            track.url = savedUrl;
+          }
+        });
       }
     }
   }
@@ -794,6 +845,7 @@ export class AudioEngine {
   }
 
   stopTrack() {
+    this.playSessionId++;
     if (this.isYtMode && this.ytPlayer?.stopVideo) {
       try { this.ytPlayer.stopVideo(); } catch {}
       this.stopYtTicker();
@@ -808,6 +860,9 @@ export class AudioEngine {
     this.trackState.currentTime = 0;
     this.trackState.duration = 0;
     this.emitTrackState();
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try { navigator.mediaSession.playbackState = "none"; } catch {}
+    }
   }
 
   seekTrack(seconds: number) {
@@ -870,13 +925,11 @@ export class AudioEngine {
 
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
-      window.removeEventListener("touchstart", unlock);
     };
 
     if (typeof window !== "undefined") {
       window.addEventListener("pointerdown", unlock, { once: true, passive: true });
       window.addEventListener("keydown", unlock, { once: true, passive: true });
-      window.addEventListener("touchstart", unlock, { once: true, passive: true });
     }
   }
 }

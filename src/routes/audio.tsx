@@ -744,7 +744,8 @@ function BandaSonora() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
           {PLANTILLAS_SONORAS.map((item) => {
             const yaAgregada = canciones.some((c) => c.nombre_cancion === item.nombre);
-            const isPlayingThis = player.track?.url === item.url && player.isPlaying;
+            const isPlayingThis =
+              (player.track?.id === item.id || player.track?.url === item.url) && player.isPlaying;
 
             return (
               <div
@@ -816,8 +817,11 @@ function BandaSonora() {
 
             <div className="space-y-2">
               {lista.map((s) => {
-                const isThisPlaying = player.track?.id === s.id && player.isPlaying;
-                const isThisActive = player.track?.id === s.id;
+                const isThisPlaying =
+                  (player.track?.id === s.id || player.track?.url === s.url_enlace) &&
+                  player.isPlaying;
+                const isThisActive =
+                  player.track?.id === s.id || player.track?.url === s.url_enlace;
 
                 return (
                   <div
