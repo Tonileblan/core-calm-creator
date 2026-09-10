@@ -276,6 +276,28 @@ function BandaSonora() {
 
   const isYoutube = isYouTubeUrl(url);
 
+  // Mantener pantalla activa mientras se reproduce música
+  useWakeLock(isPlaying);
+
+  // Manejar reconexión / no pausar en segundo plano
+  useEffect(() => {
+    const handleVis = () => {
+      if (isPlaying) {
+        if (audioRef.current && audioRef.current.paused && audioRef.current.src) {
+          audioRef.current.play().catch(() => {});
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVis);
+    window.addEventListener("focus", handleVis);
+    window.addEventListener("pageshow", handleVis);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVis);
+      window.removeEventListener("focus", handleVis);
+      window.removeEventListener("pageshow", handleVis);
+    };
+  }, [isPlaying]);
+
   // Carga del script oficial de YouTube Iframe API para reproducción integrada en background
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -590,6 +612,10 @@ function BandaSonora() {
       {/* Contenedores ocultos de audio nativo y YouTube iframe */}
       <audio
         ref={audioRef}
+        playsInline
+        webkit-playsinline="true"
+        preload="auto"
+        crossOrigin="anonymous"
         onTimeUpdate={() => {
           if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
         }}

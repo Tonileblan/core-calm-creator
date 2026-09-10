@@ -72,9 +72,40 @@ type Nodes = {
   stop: () => void;
 };
 
-// WAV de silencio de 1 segundo para anclar la sesión de audio en iOS/Android
-const SILENT_AUDIO_URI =
-  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+/**
+ * Genera dinámicamente un buffer WAV de audio silencioso PCM (8kHz mono)
+ * para anclar la sesión de audio nativa de iOS y Android en segundo plano.
+ */
+function createSilentWavBlobUrl(seconds = 4): string {
+  if (typeof window === "undefined") return "";
+  const sampleRate = 8000;
+  const numChannels = 1;
+  const bitsPerSample = 8;
+  const numSamples = sampleRate * seconds;
+  const buffer = new ArrayBuffer(44 + numSamples);
+  const view = new DataView(buffer);
+
+  // Cabecera RIFF/WAVE
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  view.setUint32(4, 36 + numSamples, true);
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
+  view.setUint16(32, numChannels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  view.setUint32(36, 0x64617461, false); // "data"
+  view.setUint32(40, numSamples, true);
+
+  const pcm = new Uint8Array(buffer, 44, numSamples);
+  pcm.fill(128); // Silencio en 8-bit unsigned
+
+  const blob = new Blob([buffer], { type: "audio/wav" });
+  return URL.createObjectURL(blob);
+}
 
 function noiseBuffer(ctx: AudioContext, kind: "white" | "brown" | "pink") {
   const seconds = 4;
@@ -105,10 +136,36 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private current: Nodes | null = null;
   private master: GainNode | null = null;
+  private streamDestination: MediaStreamAudioDestinationNode | null = null;
+  private streamAudioEl: HTMLAudioElement | null = null;
+  private silentCarrierEl: HTMLAudioElement | null = null;
   private _volume = 0.5;
   private _playing: SoundId | null = null;
-  private silentAudioEl: HTMLAudioElement | null = null;
   private alarmInterval: number | null = null;
+  private silentBlobUrl: string | null = null;
+
+  constructor() {
+    if (typeof window !== "undefined") {
+      const resumeIfActive = () => {
+        if (this._playing !== null || this.alarmInterval !== null) {
+          if (this.ctx && (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted")) {
+            void this.ctx.resume();
+          }
+          if (this.silentCarrierEl && this.silentCarrierEl.paused) {
+            void this.silentCarrierEl.play().catch(() => {});
+          }
+          if (this.streamAudioEl && this.streamAudioEl.paused) {
+            void this.streamAudioEl.play().catch(() => {});
+          }
+        }
+      };
+
+      document.addEventListener("visibilitychange", resumeIfActive);
+      window.addEventListener("focus", resumeIfActive);
+      window.addEventListener("pageshow", resumeIfActive);
+      window.addEventListener("touchend", resumeIfActive, { passive: true });
+    }
+  }
 
   get playing() {
     return this._playing;
@@ -127,9 +184,22 @@ export class AudioEngine {
       this.ctx = new Ctor();
       this.master = this.ctx.createGain();
       this.master.gain.value = this._volume;
+
+      // Salida estándar a destino de altavoces
       this.master.connect(this.ctx.destination);
+
+      // Puente MediaStream para forzar a iOS Safari y Android a mantener viva la reproducción en segundo plano
+      if (typeof this.ctx.createMediaStreamDestination === "function") {
+        try {
+          this.streamDestination = this.ctx.createMediaStreamDestination();
+          this.master.connect(this.streamDestination);
+          this.ensureStreamAudioElement();
+        } catch (e) {
+          console.warn("createMediaStreamDestination warning:", e);
+        }
+      }
     }
-    if (this.ctx.state === "suspended") {
+    if (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted") {
       void this.ctx.resume();
     }
     this.ensureSilentCarrier();
@@ -137,30 +207,69 @@ export class AudioEngine {
   }
 
   /**
-   * Elemento de audio silencioso en bucle para forzar a iOS Safari y Android
-   * a mantener vivo el proceso de audio cuando la pantalla se apaga o la app pasa a segundo plano.
+   * Elemento de audio con MediaStream para forzar al kernel de audio móvil
+   * a no silenciar las frecuencias ni la alarma cuando la pantalla se apaga.
+   */
+  private ensureStreamAudioElement() {
+    if (typeof window === "undefined" || !this.streamDestination) return;
+    if (!this.streamAudioEl) {
+      const audio = document.createElement("audio");
+      audio.setAttribute("playsinline", "true");
+      audio.setAttribute("webkit-playsinline", "true");
+      audio.setAttribute("preload", "auto");
+      (audio as any).playsInline = true;
+      audio.autoplay = true;
+      audio.volume = 0.01;
+      audio.srcObject = this.streamDestination.stream;
+      audio.style.position = "fixed";
+      audio.style.opacity = "0";
+      audio.style.pointerEvents = "none";
+      audio.style.bottom = "0";
+      audio.style.right = "0";
+      document.body.appendChild(audio);
+      this.streamAudioEl = audio;
+    } else if (this.streamAudioEl.srcObject !== this.streamDestination.stream) {
+      this.streamAudioEl.srcObject = this.streamDestination.stream;
+    }
+  }
+
+  /**
+   * Elemento de audio portador continuo en bucle para anclar la sesión en segundo plano.
    */
   private ensureSilentCarrier() {
     if (typeof window === "undefined") return;
-    if (!this.silentAudioEl) {
+    if (!this.silentCarrierEl) {
+      if (!this.silentBlobUrl) {
+        this.silentBlobUrl = createSilentWavBlobUrl(4);
+      }
       const audio = document.createElement("audio");
-      audio.src = SILENT_AUDIO_URI;
+      audio.src = this.silentBlobUrl;
       audio.loop = true;
       (audio as any).playsInline = true;
       audio.setAttribute("playsinline", "true");
       audio.setAttribute("webkit-playsinline", "true");
+      audio.setAttribute("preload", "auto");
       audio.volume = 0.01;
-      this.silentAudioEl = audio;
+      audio.style.position = "fixed";
+      audio.style.opacity = "0";
+      audio.style.pointerEvents = "none";
+      audio.style.bottom = "0";
+      audio.style.right = "0";
+      this.silentCarrierEl = audio;
       document.body.appendChild(audio);
     }
   }
 
   private startBackgroundSession(title: string, artist = "Blowmind · Foco & Bienestar") {
     this.ensureSilentCarrier();
-    if (this.silentAudioEl) {
-      this.silentAudioEl.play().catch(() => {
-        // En algunos casos requiere interacción del usuario
-      });
+    if (this.silentCarrierEl) {
+      this.silentCarrierEl.play().catch(() => {});
+    }
+    if (this.streamDestination) {
+      this.ensureStreamAudioElement();
+      if (this.streamAudioEl) {
+        this.streamAudioEl.play().catch(() => {});
+      }
     }
 
     // Configuración de la API MediaSession para pantalla de bloqueo
@@ -179,7 +288,8 @@ export class AudioEngine {
 
         navigator.mediaSession.setActionHandler("play", () => {
           if (this.ctx?.state === "suspended") void this.ctx.resume();
-          if (this.silentAudioEl) void this.silentAudioEl.play();
+          if (this.silentCarrierEl) void this.silentCarrierEl.play();
+          if (this.streamAudioEl) void this.streamAudioEl.play();
         });
         navigator.mediaSession.setActionHandler("pause", () => {
           this.stop();
@@ -194,8 +304,11 @@ export class AudioEngine {
   }
 
   private stopBackgroundSession() {
-    if (this.silentAudioEl) {
-      this.silentAudioEl.pause();
+    if (this.silentCarrierEl) {
+      this.silentCarrierEl.pause();
+    }
+    if (this.streamAudioEl) {
+      this.streamAudioEl.pause();
     }
     if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
       try {
