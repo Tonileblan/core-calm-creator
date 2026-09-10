@@ -48,9 +48,9 @@ export function useWakeLock(enabled = true) {
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         void releaseWakeLock();
       };
-    } else {
-      void releaseWakeLock();
     }
+    void releaseWakeLock();
+    return undefined;
   }, [enabled, requestWakeLock, releaseWakeLock]);
 
   return { requestWakeLock, releaseWakeLock };

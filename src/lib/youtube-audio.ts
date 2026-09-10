@@ -206,7 +206,7 @@ export async function downloadYouTubeAudioBuffer(
 
       if (fullBuffer && fullBuffer.byteLength > 20000) {
         return {
-          buffer: fullBuffer.buffer,
+          buffer: fullBuffer.buffer as ArrayBuffer,
           title,
           author,
           mimeType: bestFormat.mimeType?.split(";")[0] || "audio/mp4",

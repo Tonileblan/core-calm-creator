@@ -192,9 +192,6 @@ export function AlarmListener() {
       audioRef.current.pause();
       audioRef.current.src = "";
     }
-    if (ytPlayerRef.current?.pauseVideo) {
-      ytPlayerRef.current.pauseVideo();
-    }
     setAlarmaSonando(null);
   }, []);
 
