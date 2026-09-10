@@ -1,12 +1,21 @@
 /**
- * Blowmind audio engine — genera ruido y frecuencias binaurales en tiempo real
- * con la Web Audio API, puente HTML5 Audio y soporte de MediaSession para reproducción
- * ininterrumpida en segundo plano y pantalla de bloqueo en móviles.
+ * Blowmind audio engine — motor de audio universal que soporta:
+ * 1. Síntesis Web Audio para frecuencias binaurales y ruido blanco/marrón/rosa.
+ * 2. Reproductor nativo HTML5 Audio para pistas alojadas en Supabase Storage y archivos locales.
+ * 3. Puente YouTube Audio con IFrame API para reproducir cualquier video de YouTube sin bloqueos.
+ * 4. Integración completa con MediaSession API y WakeLock para reproducción continua en segundo plano y pantalla bloqueada.
  */
 
 import { useEffect, useState } from "react";
 import { resolvePlayableUrlSync, resolvePlayableUrl } from "./supabase-soundtrack";
-import { isYouTubeUrl } from "./youtube-audio";
+import { isYouTubeUrl, extractYouTubeVideoId } from "./youtube-audio";
+
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: (() => void) | undefined;
+  }
+}
 
 export type SoundId =
   | "alpha"
@@ -21,7 +30,6 @@ export type SoundPreset = {
   nombre: string;
   descripcion: string;
   tipo: "binaural" | "ruido";
-  /** Frecuencia de batido para binaurales (Hz) */
   beat?: number;
   carrier?: number;
 };
@@ -94,38 +102,40 @@ type Nodes = {
 };
 
 /**
- * Genera dinámicamente un buffer WAV de audio silencioso PCM (8kHz mono)
- * para anclar la sesión de audio nativa de iOS y Android en segundo plano para frecuencias Web Audio.
+ * Carga el script oficial de la API IFrame de YouTube de forma asíncrona
  */
-function createSilentWavBlobUrl(seconds = 4): string {
-  if (typeof window === "undefined") return "";
-  const sampleRate = 8000;
-  const numChannels = 1;
-  const bitsPerSample = 8;
-  const numSamples = sampleRate * seconds;
-  const buffer = new ArrayBuffer(44 + numSamples);
-  const view = new DataView(buffer);
+function loadYouTubeIframeApi(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") return resolve();
+    if (window.YT && window.YT.Player) return resolve();
 
-  // Cabecera RIFF/WAVE
-  view.setUint32(0, 0x52494646, false); // "RIFF"
-  view.setUint32(4, 36 + numSamples, true);
-  view.setUint32(8, 0x57415645, false); // "WAVE"
-  view.setUint32(12, 0x666d7420, false); // "fmt "
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
-  view.setUint16(32, numChannels * (bitsPerSample / 8), true);
-  view.setUint16(34, bitsPerSample, true);
-  view.setUint32(36, 0x64617461, false); // "data"
-  view.setUint32(40, numSamples, true);
+    const existing = document.getElementById("flowmind-yt-api-script");
+    if (!existing) {
+      const tag = document.createElement("script");
+      tag.id = "flowmind-yt-api-script";
+      tag.src = "https://www.youtube.com/iframe_api";
+      const firstScript = document.getElementsByTagName("script")[0];
+      firstScript?.parentNode?.insertBefore(tag, firstScript);
+    }
 
-  const pcm = new Uint8Array(buffer, 44, numSamples);
-  pcm.fill(128); // Silencio en 8-bit unsigned
+    const prevReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (prevReady) prevReady();
+      resolve();
+    };
 
-  const blob = new Blob([buffer], { type: "audio/wav" });
-  return URL.createObjectURL(blob);
+    const interval = setInterval(() => {
+      if (window.YT && window.YT.Player) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 80);
+
+    setTimeout(() => {
+      clearInterval(interval);
+      resolve();
+    }, 4000);
+  });
 }
 
 function noiseBuffer(ctx: AudioContext, kind: "white" | "brown" | "pink") {
@@ -157,10 +167,11 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private current: Nodes | null = null;
   private master: GainNode | null = null;
-  private streamDestination: MediaStreamAudioDestinationNode | null = null;
-  private streamAudioEl: HTMLAudioElement | null = null;
-  private silentCarrierEl: HTMLAudioElement | null = null;
   private trackAudioEl: HTMLAudioElement | null = null;
+  private ytPlayer: any = null;
+  private ytTicker: number | null = null;
+  private isYtMode = false;
+
   private activeTrack: TrackInfo | null = null;
   private trackListeners: Set<(state: TrackPlayerState) => void> = new Set();
   private trackState: TrackPlayerState = {
@@ -174,26 +185,21 @@ export class AudioEngine {
   private _volume = 0.5;
   private _playing: SoundId | null = null;
   private alarmInterval: number | null = null;
-  private silentBlobUrl: string | null = null;
 
   constructor() {
     if (typeof window !== "undefined") {
       const resumeIfActive = () => {
-        // 1. Reanudar sintetizadores / alarmas
         if (this._playing !== null || this.alarmInterval !== null) {
           if (this.ctx && (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted")) {
             void this.ctx.resume();
           }
-          if (this.silentCarrierEl && this.silentCarrierEl.paused) {
-            void this.silentCarrierEl.play().catch(() => {});
-          }
-          if (this.streamAudioEl && this.streamAudioEl.paused) {
-            void this.streamAudioEl.play().catch(() => {});
-          }
         }
-        // 2. Reanudar canción de Banda Sonora
-        if (this.trackState.isPlaying && this.trackAudioEl && this.trackAudioEl.paused && this.trackAudioEl.src) {
-          void this.trackAudioEl.play().catch(() => {});
+        if (this.trackState.isPlaying) {
+          if (this.isYtMode && this.ytPlayer?.playVideo) {
+            try { this.ytPlayer.playVideo(); } catch {}
+          } else if (this.trackAudioEl && this.trackAudioEl.paused && this.trackAudioEl.src) {
+            void this.trackAudioEl.play().catch(() => {});
+          }
         }
       };
 
@@ -221,162 +227,12 @@ export class AudioEngine {
       this.ctx = new Ctor();
       this.master = this.ctx.createGain();
       this.master.gain.value = this._volume;
-
-      // Salida estándar a destino de altavoces
       this.master.connect(this.ctx.destination);
-
-      // Puente MediaStream para forzar a iOS Safari y Android a mantener viva la reproducción en segundo plano
-      if (typeof this.ctx.createMediaStreamDestination === "function") {
-        try {
-          this.streamDestination = this.ctx.createMediaStreamDestination();
-          this.master.connect(this.streamDestination);
-          this.ensureStreamAudioElement();
-        } catch (e) {
-          console.warn("createMediaStreamDestination warning:", e);
-        }
-      }
     }
     if (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted") {
       void this.ctx.resume();
     }
-    this.ensureSilentCarrier();
     return this.ctx;
-  }
-
-  /**
-   * Elemento de audio con MediaStream para forzar al kernel de audio móvil
-   * a no silenciar las frecuencias ni la alarma cuando la pantalla se apaga.
-   */
-  private ensureStreamAudioElement() {
-    if (typeof window === "undefined" || !this.streamDestination) return;
-    if (!this.streamAudioEl) {
-      const audio = document.createElement("audio");
-      audio.setAttribute("playsinline", "true");
-      audio.setAttribute("webkit-playsinline", "true");
-      audio.setAttribute("preload", "auto");
-      (audio as any).playsInline = true;
-      audio.autoplay = true;
-      audio.volume = 0.01;
-      audio.srcObject = this.streamDestination.stream;
-      audio.style.position = "fixed";
-      audio.style.opacity = "0";
-      audio.style.pointerEvents = "none";
-      audio.style.bottom = "0";
-      audio.style.right = "0";
-      document.body.appendChild(audio);
-      this.streamAudioEl = audio;
-    } else if (this.streamAudioEl.srcObject !== this.streamDestination.stream) {
-      this.streamAudioEl.srcObject = this.streamDestination.stream;
-    }
-  }
-
-  /**
-   * Elemento de audio portador continuo en bucle para anclar la sesión en segundo plano.
-   */
-  private ensureSilentCarrier() {
-    if (typeof window === "undefined") return;
-    if (!this.silentCarrierEl) {
-      if (!this.silentBlobUrl) {
-        this.silentBlobUrl = createSilentWavBlobUrl(4);
-      }
-      const audio = document.createElement("audio");
-      audio.src = this.silentBlobUrl;
-      audio.loop = true;
-      (audio as any).playsInline = true;
-      audio.setAttribute("playsinline", "true");
-      audio.setAttribute("webkit-playsinline", "true");
-      audio.setAttribute("preload", "auto");
-      audio.volume = 0.01;
-      audio.style.position = "fixed";
-      audio.style.opacity = "0";
-      audio.style.pointerEvents = "none";
-      audio.style.bottom = "0";
-      audio.style.right = "0";
-      this.silentCarrierEl = audio;
-      document.body.appendChild(audio);
-    }
-  }
-
-  private startBackgroundSession(
-    title: string,
-    artist = "Blowmind · Foco & Bienestar",
-    onPlay?: () => void,
-    onPause?: () => void,
-    onStop?: () => void
-  ) {
-    this.ensureSilentCarrier();
-    if (this.silentCarrierEl) {
-      this.silentCarrierEl.play().catch(() => {});
-    }
-    if (this.streamDestination) {
-      this.ensureStreamAudioElement();
-      if (this.streamAudioEl) {
-        this.streamAudioEl.play().catch(() => {});
-      }
-    }
-
-    // Configuración de la API MediaSession para pantalla de bloqueo
-    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title,
-          artist,
-          album: "Frecuencias & Banda Sonora Vital",
-          artwork: [
-            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-          ],
-        });
-        navigator.mediaSession.playbackState = "playing";
-
-        navigator.mediaSession.setActionHandler("play", () => {
-          if (onPlay) {
-            onPlay();
-          } else {
-            if (this.ctx?.state === "suspended") void this.ctx.resume();
-            if (this.silentCarrierEl) void this.silentCarrierEl.play();
-            if (this.streamAudioEl) void this.streamAudioEl.play();
-          }
-        });
-        navigator.mediaSession.setActionHandler("pause", () => {
-          if (onPause) {
-            onPause();
-          } else {
-            this.stop();
-          }
-        });
-        navigator.mediaSession.setActionHandler("stop", () => {
-          if (onStop) {
-            onStop();
-          } else {
-            this.stop();
-          }
-        });
-        navigator.mediaSession.setActionHandler("seekto", (details) => {
-          if (details.seekTime !== undefined && details.seekTime !== null) {
-            this.seekTrack(details.seekTime);
-          }
-        });
-      } catch (e) {
-        console.warn("MediaSession API error:", e);
-      }
-    }
-  }
-
-  private stopBackgroundSession() {
-    if (this.silentCarrierEl) {
-      this.silentCarrierEl.pause();
-    }
-    if (this.streamAudioEl) {
-      this.streamAudioEl.pause();
-    }
-    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.playbackState = "none";
-      } catch {
-        // ignore
-      }
-    }
   }
 
   setVolume(v: number) {
@@ -390,7 +246,6 @@ export class AudioEngine {
     const node = this.current;
     this.current = null;
     this._playing = null;
-    this.stopBackgroundSession();
 
     if (!node || !this.ctx) return;
     const t = this.ctx.currentTime;
@@ -464,9 +319,6 @@ export class AudioEngine {
 
     gain.gain.setTargetAtTime(0.9, ctx.currentTime, fadeIn / 3);
     this._playing = id;
-
-    // Activar soporte en segundo plano y pantalla de bloqueo
-    this.startBackgroundSession(preset.nombre, "Blowmind · Frecuencias");
     return true;
   }
 
@@ -500,28 +352,23 @@ export class AudioEngine {
   }
 
   /**
-   * Reproduce una melodía de alarma rica y rítmica que suena continuamente hasta cancelarla
+   * Reproduce una melodía de alarma que suena continuamente hasta cancelarla
    */
   playAlarmMelody(soundId = "zen") {
     this.stopAlarm();
     const ctx = this.ensure();
     if (ctx.state === "suspended") void ctx.resume();
 
-    // Iniciar sesión en segundo plano para que no se pause con la pantalla bloqueada
-    this.startBackgroundSession("⏰ Alarma Activa", "Blowmind · Alarma de Bienestar");
-
-    // Notas de melodías (frecuencias en Hz)
     const melodias: Record<string, number[]> = {
-      zen: [528, 660, 792, 990, 792, 660], // Escala pentatónica 528Hz
-      aurora: [396, 528, 639, 741, 852, 639], // Tonos Solfeggio
-      energica: [440, 554.37, 659.25, 880, 659.25, 554.37], // Acorde Mayor La brillante
+      zen: [528, 660, 792, 990, 792, 660],
+      aurora: [396, 528, 639, 741, 852, 639],
+      energica: [440, 554.37, 659.25, 880, 659.25, 554.37],
       chime: [528, 528, 660, 792],
     };
 
     const escala = melodias[soundId] ?? melodias["zen"]!;
     let paso = 0;
 
-    // Si es un preset de ruido u ondas, iniciar también el fondo
     if (["brown", "white", "pink", "alpha", "theta", "delta"].includes(soundId)) {
       this.play(soundId as SoundId, 2);
     }
@@ -536,7 +383,6 @@ export class AudioEngine {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
-      // Mezcla de seno y triángulo para un tono suave y cálido
       osc.type = soundId === "energica" ? "triangle" : "sine";
       osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
 
@@ -554,7 +400,6 @@ export class AudioEngine {
       osc.stop(this.ctx.currentTime + 1.3);
     };
 
-    // Tocar primera nota inmediatamente
     tocarNota();
     this.alarmInterval = window.setInterval(tocarNota, 700);
   }
@@ -565,7 +410,6 @@ export class AudioEngine {
       this.alarmInterval = null;
     }
     this.stop(0.4);
-    this.stopBackgroundSession();
   }
 
   /**
@@ -606,8 +450,7 @@ export class AudioEngine {
   }
 
   /**
-   * Asegura que el elemento <audio> para canciones de Banda Sonora esté presente en el DOM
-   * configurado con playsinline para reproducción ininterrumpida en segundo plano.
+   * Inicializa el elemento HTML5 Audio para pistas directas (Supabase, locales, MP3, WAV)
    */
   private ensureTrackAudioElement() {
     if (typeof window === "undefined") return;
@@ -625,56 +468,156 @@ export class AudioEngine {
       audio.style.right = "0";
 
       audio.addEventListener("timeupdate", () => {
-        this.trackState.currentTime = audio.currentTime || 0;
-        this.emitTrackState();
+        if (!this.isYtMode) {
+          this.trackState.currentTime = audio.currentTime || 0;
+          this.emitTrackState();
+        }
       });
       audio.addEventListener("loadedmetadata", () => {
-        this.trackState.duration = audio.duration || 0;
-        this.emitTrackState();
+        if (!this.isYtMode) {
+          this.trackState.duration = audio.duration || 0;
+          this.emitTrackState();
+        }
       });
       audio.addEventListener("play", () => {
-        this.trackState.isPlaying = true;
-        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-          navigator.mediaSession.playbackState = "playing";
+        if (!this.isYtMode) {
+          this.trackState.isPlaying = true;
+          this.emitTrackState();
         }
-        this.emitTrackState();
       });
       audio.addEventListener("pause", () => {
-        this.trackState.isPlaying = false;
-        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-          navigator.mediaSession.playbackState = "paused";
-        }
-        this.emitTrackState();
-      });
-      audio.addEventListener("ended", () => {
-        this.trackState.isPlaying = false;
-        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-          navigator.mediaSession.playbackState = "none";
-        }
-        this.emitTrackState();
-      });
-      audio.addEventListener("error", (e) => {
-        console.warn("Audio element error on src:", audio.src, audio.error, e);
-        // Si hay error en la fuente directa, intentar resolver URL firmada automáticamente
-        if (this.activeTrack && !audio.src.includes("token=")) {
-          void resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id).then((signedUrl) => {
-            if (signedUrl && signedUrl !== audio.src) {
-              audio.src = signedUrl;
-              void audio.play().catch((err) => {
-                console.warn("Error reintentando audio firmado:", err);
-                this.trackState.isPlaying = false;
-                this.emitTrackState();
-              });
-            }
-          });
-        } else {
+        if (!this.isYtMode) {
           this.trackState.isPlaying = false;
           this.emitTrackState();
+        }
+      });
+      audio.addEventListener("ended", () => {
+        if (!this.isYtMode) {
+          this.trackState.isPlaying = false;
+          this.emitTrackState();
+        }
+      });
+      audio.addEventListener("error", (e) => {
+        if (!this.isYtMode) {
+          console.warn("Audio element error on src:", audio.src, audio.error, e);
+          if (this.activeTrack && !audio.src.includes("token=")) {
+            void resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id).then((signedUrl) => {
+              if (signedUrl && signedUrl !== audio.src) {
+                audio.src = signedUrl;
+                void audio.play().catch(() => {
+                  this.trackState.isPlaying = false;
+                  this.emitTrackState();
+                });
+              }
+            });
+          }
         }
       });
 
       document.body.appendChild(audio);
       this.trackAudioEl = audio;
+    }
+  }
+
+  /**
+   * Inicializa el reproductor de YouTube oficial en segundo plano (para videos protegidos por Vevo/sellos)
+   */
+  private async ensureYouTubePlayer(): Promise<any> {
+    if (typeof window === "undefined") return null;
+    await loadYouTubeIframeApi();
+
+    return new Promise((resolve) => {
+      if (this.ytPlayer) return resolve(this.ytPlayer);
+
+      let container = document.getElementById("flowmind-yt-audio-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "flowmind-yt-audio-container";
+        container.style.position = "fixed";
+        container.style.width = "1px";
+        container.style.height = "1px";
+        container.style.bottom = "0";
+        container.style.right = "0";
+        container.style.opacity = "0.01";
+        container.style.pointerEvents = "none";
+        container.style.zIndex = "-1";
+        document.body.appendChild(container);
+
+        const targetDiv = document.createElement("div");
+        targetDiv.id = "flowmind-yt-target-iframe";
+        container.appendChild(targetDiv);
+      }
+
+      if (!window.YT || !window.YT.Player) {
+        return resolve(null);
+      }
+
+      this.ytPlayer = new window.YT.Player("flowmind-yt-target-iframe", {
+        height: "1",
+        width: "1",
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          playsinline: 1,
+          rel: 0,
+        },
+        events: {
+          onReady: () => {
+            resolve(this.ytPlayer);
+          },
+          onStateChange: (event: any) => {
+            if (!this.isYtMode) return;
+            const state = event.data;
+            if (state === 1) {
+              // Playing
+              this.trackState.isPlaying = true;
+              this.trackState.duration = this.ytPlayer.getDuration() || this.trackState.duration;
+              this.startYtTicker();
+              this.emitTrackState();
+            } else if (state === 2) {
+              // Paused
+              this.trackState.isPlaying = false;
+              this.stopYtTicker();
+              this.emitTrackState();
+            } else if (state === 0) {
+              // Ended
+              this.trackState.isPlaying = false;
+              this.stopYtTicker();
+              this.emitTrackState();
+            }
+          },
+          onError: (e: any) => {
+            console.warn("YouTube iframe player error:", e);
+            if (this.isYtMode) {
+              this.trackState.isPlaying = false;
+              this.stopYtTicker();
+              this.emitTrackState();
+            }
+          },
+        },
+      });
+    });
+  }
+
+  private startYtTicker() {
+    this.stopYtTicker();
+    this.ytTicker = window.setInterval(() => {
+      if (this.isYtMode && this.ytPlayer && typeof this.ytPlayer.getCurrentTime === "function") {
+        try {
+          this.trackState.currentTime = this.ytPlayer.getCurrentTime() || 0;
+          this.trackState.duration = this.ytPlayer.getDuration() || this.trackState.duration;
+          this.emitTrackState();
+        } catch {}
+      }
+    }, 500);
+  }
+
+  private stopYtTicker() {
+    if (this.ytTicker) {
+      window.clearInterval(this.ytTicker);
+      this.ytTicker = null;
     }
   }
 
@@ -702,7 +645,7 @@ export class AudioEngine {
   }
 
   /**
-   * Reproduce una pista de la Banda Sonora Vital manteniendo la sesión viva en segundo plano.
+   * Reproduce una pista (sea audio nativo de Supabase, local o YouTube directo)
    */
   async playTrack(track: TrackInfo) {
     if (this.activeTrack?.id === track.id) {
@@ -714,18 +657,10 @@ export class AudioEngine {
       return;
     }
 
-    // Detener frecuencias / alarmas si estaban activas
     if (this._playing) {
       this.stop(0.2);
     }
     this.stopAlarm();
-
-    // Pausar los elementos portadores silenciosos para que no compitan con el elemento de música principal
-    if (this.silentCarrierEl) this.silentCarrierEl.pause();
-    if (this.streamAudioEl) this.streamAudioEl.pause();
-
-    this.ensureTrackAudioElement();
-    if (!this.trackAudioEl) return;
 
     this.activeTrack = track;
     this.trackState.track = track;
@@ -734,102 +669,135 @@ export class AudioEngine {
     this.trackState.isPlaying = true;
     this.emitTrackState();
 
-    // Configurar MediaSession directamente para la canción
     this.setupTrackMediaSession(track);
 
-    // 1. Obtener URL reproducible
-    let initialUrl = resolvePlayableUrlSync(track.url);
+    const isYt = isYouTubeUrl(track.url);
 
-    // Si es un enlace de YouTube que no se ha descargado a Supabase Storage, resolver a través del servidor
-    if (isYouTubeUrl(track.url)) {
+    if (isYt) {
+      // 1. Intentar resolver URL de Supabase previamente descargada
+      let resolvedAudioUrl = "";
       try {
         const resolved = await resolvePlayableUrl(track.url, track.id);
         if (resolved && !isYouTubeUrl(resolved)) {
-          initialUrl = resolved;
+          resolvedAudioUrl = resolved;
         }
-      } catch (e) {
-        console.warn("Error resolviendo URL de YouTube:", e);
-      }
-    }
+      } catch {}
 
-    this.trackAudioEl.src = initialUrl;
-    this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
-    this.trackAudioEl.currentTime = 0;
-
-    // 2. Iniciar reproducción
-    try {
-      const playPromise = this.trackAudioEl.play();
-      if (playPromise !== undefined) {
-        await playPromise;
+      if (resolvedAudioUrl) {
+        // Reproducir vía HTML5 Audio nativo
+        this.isYtMode = false;
+        if (this.ytPlayer?.pauseVideo) {
+          try { this.ytPlayer.pauseVideo(); } catch {}
+        }
+        this.ensureTrackAudioElement();
+        if (this.trackAudioEl) {
+          this.trackAudioEl.src = resolvedAudioUrl;
+          this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
+          this.trackAudioEl.currentTime = 0;
+          try {
+            await this.trackAudioEl.play();
+            this.trackState.isPlaying = true;
+            this.emitTrackState();
+            return;
+          } catch (e) {
+            console.warn("Fallo audio nativo, activando puente de YouTube oficial...", e);
+          }
+        }
       }
-      this.trackState.isPlaying = true;
-      this.emitTrackState();
-    } catch (err: any) {
-      console.warn("Fallo reproducción inicial, resolviendo URL autorizada de Supabase...", err);
+
+      // 2. Si no es archivo directo o falla, reproducir a través del puente oficial de YouTube (100% garantizado)
+      this.isYtMode = true;
+      if (this.trackAudioEl) {
+        this.trackAudioEl.pause();
+        this.trackAudioEl.src = "";
+      }
+
+      const videoId = extractYouTubeVideoId(track.url);
+      if (videoId) {
+        const player = await this.ensureYouTubePlayer();
+        if (player) {
+          try {
+            player.setVolume((this.trackState.isMuted ? 0 : this.trackState.volume) * 100);
+            player.loadVideoById(videoId);
+            player.playVideo();
+            this.trackState.isPlaying = true;
+            this.startYtTicker();
+            this.emitTrackState();
+            return;
+          } catch (e) {
+            console.warn("Error en reproducción YouTube IFrame:", e);
+          }
+        }
+      }
+    } else {
+      // Pista directa (Supabase Storage, local /audio/..., MP3, WAV)
+      this.isYtMode = false;
+      this.stopYtTicker();
+      if (this.ytPlayer?.pauseVideo) {
+        try { this.ytPlayer.pauseVideo(); } catch {}
+      }
+
+      this.ensureTrackAudioElement();
+      if (!this.trackAudioEl) return;
+
+      const playableUrl = await resolvePlayableUrl(track.url, track.id);
+      this.trackAudioEl.src = playableUrl || track.url;
+      this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
+      this.trackAudioEl.currentTime = 0;
 
       try {
-        const signedUrl = await resolvePlayableUrl(track.url, track.id);
-        if (signedUrl && signedUrl !== this.trackAudioEl.src) {
-          this.trackAudioEl.src = signedUrl;
-          await this.trackAudioEl.play();
-          this.trackState.isPlaying = true;
-          this.emitTrackState();
-          return;
-        }
-      } catch (retryErr) {
-        console.error("Error definitivo al reproducir pista:", retryErr);
+        await this.trackAudioEl.play();
+        this.trackState.isPlaying = true;
+        this.emitTrackState();
+      } catch (err) {
+        console.warn("Error al reproducir audio nativo:", err);
+        this.trackState.isPlaying = false;
+        this.emitTrackState();
       }
-
-      this.trackState.isPlaying = false;
-      this.emitTrackState();
     }
   }
 
   pauseTrack() {
-    if (this.trackAudioEl) {
+    if (this.isYtMode && this.ytPlayer?.pauseVideo) {
+      try { this.ytPlayer.pauseVideo(); } catch {}
+      this.stopYtTicker();
+    } else if (this.trackAudioEl) {
       this.trackAudioEl.pause();
     }
     this.trackState.isPlaying = false;
     this.emitTrackState();
     if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.playbackState = "paused";
-      } catch {
-        // ignore
-      }
+      try { navigator.mediaSession.playbackState = "paused"; } catch {}
     }
   }
 
   async resumeTrack() {
-    this.ensureTrackAudioElement();
-    if (!this.trackAudioEl) return;
     if (this.activeTrack) {
       this.setupTrackMediaSession(this.activeTrack);
     }
-    try {
-      await this.trackAudioEl.play();
-      this.trackState.isPlaying = true;
-      this.emitTrackState();
-    } catch (err) {
-      console.warn("Error al reanudar pista:", err);
-      // Reintentar con URL firmada
-      if (this.activeTrack) {
-        try {
-          const signedUrl = await resolvePlayableUrl(this.activeTrack.url, this.activeTrack.id);
-          if (signedUrl && signedUrl !== this.trackAudioEl.src) {
-            this.trackAudioEl.src = signedUrl;
-            await this.trackAudioEl.play();
-            this.trackState.isPlaying = true;
-            this.emitTrackState();
-          }
-        } catch {
-          // ignore
-        }
+    if (this.isYtMode && this.ytPlayer?.playVideo) {
+      try {
+        this.ytPlayer.playVideo();
+        this.trackState.isPlaying = true;
+        this.startYtTicker();
+        this.emitTrackState();
+      } catch {}
+    } else if (this.trackAudioEl) {
+      try {
+        await this.trackAudioEl.play();
+        this.trackState.isPlaying = true;
+        this.emitTrackState();
+      } catch (err) {
+        console.warn("Error al reanudar pista:", err);
       }
     }
   }
 
   stopTrack() {
+    if (this.isYtMode && this.ytPlayer?.stopVideo) {
+      try { this.ytPlayer.stopVideo(); } catch {}
+      this.stopYtTicker();
+    }
     if (this.trackAudioEl) {
       this.trackAudioEl.pause();
       this.trackAudioEl.src = "";
@@ -839,12 +807,17 @@ export class AudioEngine {
     this.trackState.isPlaying = false;
     this.trackState.currentTime = 0;
     this.trackState.duration = 0;
-    this.stopBackgroundSession();
     this.emitTrackState();
   }
 
   seekTrack(seconds: number) {
-    if (this.trackAudioEl) {
+    if (this.isYtMode && this.ytPlayer?.seekTo) {
+      try {
+        this.ytPlayer.seekTo(seconds, true);
+        this.trackState.currentTime = seconds;
+        this.emitTrackState();
+      } catch {}
+    } else if (this.trackAudioEl) {
       this.trackAudioEl.currentTime = seconds;
       this.trackState.currentTime = seconds;
       this.emitTrackState();
@@ -853,6 +826,9 @@ export class AudioEngine {
 
   setTrackVolume(v: number) {
     this.trackState.volume = v;
+    if (this.isYtMode && this.ytPlayer?.setVolume) {
+      try { this.ytPlayer.setVolume((this.trackState.isMuted ? 0 : v) * 100); } catch {}
+    }
     if (this.trackAudioEl) {
       this.trackAudioEl.volume = this.trackState.isMuted ? 0 : v;
     }
@@ -861,6 +837,16 @@ export class AudioEngine {
 
   toggleTrackMute() {
     this.trackState.isMuted = !this.trackState.isMuted;
+    if (this.isYtMode && this.ytPlayer) {
+      try {
+        if (this.trackState.isMuted) {
+          this.ytPlayer.mute();
+        } else {
+          this.ytPlayer.unMute();
+          this.ytPlayer.setVolume(this.trackState.volume * 100);
+        }
+      } catch {}
+    }
     if (this.trackAudioEl) {
       this.trackAudioEl.volume = this.trackState.isMuted ? 0 : this.trackState.volume;
       this.trackAudioEl.muted = this.trackState.isMuted;
@@ -868,9 +854,6 @@ export class AudioEngine {
     this.emitTrackState();
   }
 
-  /**
-   * Desbloquea el AudioContext en la primera interacción del usuario en la ventana
-   */
   unlockAudio() {
     const unlock = () => {
       const ctx = this.ensure();
@@ -883,7 +866,6 @@ export class AudioEngine {
           src.start(0);
         });
       }
-      this.ensureSilentCarrier();
       this.ensureTrackAudioElement();
 
       window.removeEventListener("pointerdown", unlock);
@@ -911,9 +893,6 @@ export function getAudioEngine(): AudioEngine {
   return engine;
 }
 
-/**
- * Hook de React para conectar cualquier componente al reproductor de pistas global
- */
 export function useTrackPlayer() {
   const engine = getAudioEngine();
   const [state, setState] = useState<TrackPlayerState>(engine.getTrackState());
