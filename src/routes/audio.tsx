@@ -256,7 +256,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "despertar",
     descripcion: "Frecuencia acústica suave para iniciar el día con vitalidad y enfoque claro.",
-    url: "/audio/amanecer.wav",
+    url: "/audio/amanecer.m4a",
   },
   {
     id: "plantilla-celebrar",
@@ -264,7 +264,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "celebrar",
     descripcion: "Acordes optimistas para anclar momentos de gratitud, progreso y éxito.",
-    url: "/audio/triunfo.wav",
+    url: "/audio/triunfo.m4a",
   },
   {
     id: "plantilla-relajacion",
@@ -272,7 +272,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "relajacion",
     descripcion: "Paisaje sonoro orgánico para meditación, respiración y paz mental.",
-    url: "/audio/calma.wav",
+    url: "/audio/calma.m4a",
   },
   {
     id: "plantilla-dormir",
@@ -280,7 +280,7 @@ const PLANTILLAS_SONORAS = [
     artista: "Blowmind Audio Lab",
     categoria: "dormir",
     descripcion: "Texturas envolventes para desacelerar la mente e inducir un sueño profundo.",
-    url: "/audio/oceano.wav",
+    url: "/audio/oceano.m4a",
   },
 ];
 

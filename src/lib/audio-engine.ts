@@ -187,6 +187,9 @@ export class AudioEngine {
   private _playing: SoundId | null = null;
   private alarmInterval: number | null = null;
 
+  private bgKeeperAudioEl: HTMLAudioElement | null = null;
+  private streamAudioEl: HTMLAudioElement | null = null;
+
   constructor() {
     if (typeof window !== "undefined") {
       const resumeIfActive = () => {
@@ -194,6 +197,7 @@ export class AudioEngine {
           if (this.ctx && (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted")) {
             void this.ctx.resume();
           }
+          this.startBackgroundKeeper();
         }
         if (this.trackState.isPlaying) {
           if (this.isYtMode && this.ytPlayer?.playVideo) {
@@ -201,6 +205,7 @@ export class AudioEngine {
           } else if (this.trackAudioEl && this.trackAudioEl.paused && this.trackAudioEl.src) {
             void this.trackAudioEl.play().catch(() => {});
           }
+          this.startBackgroundKeeper();
         }
       };
 
@@ -211,6 +216,46 @@ export class AudioEngine {
       });
       window.addEventListener("focus", resumeIfActive);
       window.addEventListener("pageshow", resumeIfActive);
+    }
+  }
+
+  /**
+   * Mantiene viva la sesión de audio en segundo plano en iOS / WebKit
+   */
+  private startBackgroundKeeper() {
+    if (typeof window === "undefined") return;
+    try {
+      if (!this.bgKeeperAudioEl) {
+        const audio = document.createElement("audio");
+        audio.setAttribute("playsinline", "true");
+        audio.setAttribute("webkit-playsinline", "true");
+        audio.setAttribute("preload", "auto");
+        audio.setAttribute("loop", "true");
+        (audio as any).playsInline = true;
+        audio.src = "/audio/silence.m4a";
+        audio.volume = 0.01;
+        audio.style.position = "fixed";
+        audio.style.bottom = "0";
+        audio.style.left = "0";
+        audio.style.width = "1px";
+        audio.style.height = "1px";
+        audio.style.opacity = "0.01";
+        audio.style.pointerEvents = "none";
+        audio.style.zIndex = "-999";
+        document.body.appendChild(audio);
+        this.bgKeeperAudioEl = audio;
+      }
+      if (this.bgKeeperAudioEl.paused) {
+        void this.bgKeeperAudioEl.play().catch(() => {});
+      }
+    } catch {}
+  }
+
+  private stopBackgroundKeeper() {
+    if (this.bgKeeperAudioEl && !this.bgKeeperAudioEl.paused) {
+      try {
+        this.bgKeeperAudioEl.pause();
+      } catch {}
     }
   }
 
@@ -232,6 +277,33 @@ export class AudioEngine {
       this.master = this.ctx.createGain();
       this.master.gain.value = this._volume;
       this.master.connect(this.ctx.destination);
+
+      // Puente MediaStreamDestination para que iOS trate el Web Audio como streaming de medios
+      if (typeof (this.ctx as any).createMediaStreamDestination === "function") {
+        try {
+          const streamDest = (this.ctx as any).createMediaStreamDestination();
+          this.master.connect(streamDest);
+          if (!this.streamAudioEl) {
+            const streamAudio = document.createElement("audio");
+            streamAudio.setAttribute("playsinline", "true");
+            streamAudio.setAttribute("webkit-playsinline", "true");
+            (streamAudio as any).playsInline = true;
+            streamAudio.autoplay = true;
+            streamAudio.srcObject = streamDest.stream;
+            streamAudio.style.position = "fixed";
+            streamAudio.style.bottom = "0";
+            streamAudio.style.left = "0";
+            streamAudio.style.width = "1px";
+            streamAudio.style.height = "1px";
+            streamAudio.style.opacity = "0.01";
+            streamAudio.style.pointerEvents = "none";
+            streamAudio.style.zIndex = "-999";
+            document.body.appendChild(streamAudio);
+            this.streamAudioEl = streamAudio;
+            void streamAudio.play().catch(() => {});
+          }
+        } catch {}
+      }
     }
     if (this.ctx.state === "suspended" || (this.ctx as any).state === "interrupted") {
       void this.ctx.resume();
@@ -251,6 +323,10 @@ export class AudioEngine {
     this.current = null;
     this._playing = null;
 
+    if (!this.trackState.isPlaying && this.alarmInterval === null) {
+      this.stopBackgroundKeeper();
+    }
+
     if (!node || !this.ctx) return;
     const t = this.ctx.currentTime;
     node.gain.gain.cancelScheduledValues(t);
@@ -269,6 +345,8 @@ export class AudioEngine {
     const ctx = this.ensure();
     const preset = SOUND_PRESETS.find((p) => p.id === id);
     if (!preset || !this.master) return false;
+
+    this.startBackgroundKeeper();
 
     const gain = ctx.createGain();
     gain.gain.value = 0.0001;
@@ -323,6 +401,25 @@ export class AudioEngine {
 
     gain.gain.setTargetAtTime(0.9, ctx.currentTime, fadeIn / 3);
     this._playing = id;
+
+    // MediaSession para frecuencias binaurales
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: preset.nombre,
+          artist: "Frecuencias · Blowmind",
+          album: "Terapia de Sonido Neurofisiológica",
+          artwork: [
+            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        });
+        navigator.mediaSession.playbackState = "playing";
+        navigator.mediaSession.setActionHandler("stop", () => this.stop());
+        navigator.mediaSession.setActionHandler("pause", () => this.stop());
+      } catch {}
+    }
+
     return true;
   }
 
@@ -362,6 +459,8 @@ export class AudioEngine {
     this.stopAlarm();
     const ctx = this.ensure();
     if (ctx.state === "suspended") void ctx.resume();
+
+    this.startBackgroundKeeper();
 
     const melodias: Record<string, number[]> = {
       zen: [528, 660, 792, 990, 792, 660],
@@ -447,6 +546,12 @@ export class AudioEngine {
             this.seekTrack(details.seekTime);
           }
         });
+        navigator.mediaSession.setActionHandler("seekforward", (details) => {
+          this.seekTrack(this.trackState.currentTime + (details.seekOffset || 10));
+        });
+        navigator.mediaSession.setActionHandler("seekbackward", (details) => {
+          this.seekTrack(Math.max(0, this.trackState.currentTime - (details.seekOffset || 10)));
+        });
       } catch (e) {
         console.warn("MediaSession API error:", e);
       }
@@ -454,7 +559,27 @@ export class AudioEngine {
   }
 
   /**
-   * Inicializa el elemento HTML5 Audio para pistas directas (Supabase, locales, MP3, WAV)
+   * Actualiza el estado dinámico de posición en la pantalla de bloqueo de iOS
+   */
+  private updateMediaSessionPosition() {
+    if (
+      typeof navigator !== "undefined" &&
+      "mediaSession" in navigator &&
+      "setPositionState" in navigator.mediaSession &&
+      this.trackState.duration > 0
+    ) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: this.trackState.duration,
+          playbackRate: 1,
+          position: Math.min(this.trackState.currentTime, this.trackState.duration),
+        });
+      } catch {}
+    }
+  }
+
+  /**
+   * Inicializa el elemento HTML5 Audio para pistas directas (Supabase, locales, MP3, M4A)
    */
   private ensureTrackAudioElement() {
     if (typeof window === "undefined") return;
@@ -462,42 +587,59 @@ export class AudioEngine {
       const audio = document.createElement("audio");
       audio.setAttribute("playsinline", "true");
       audio.setAttribute("webkit-playsinline", "true");
+      audio.setAttribute("x-webkit-airplay", "allow");
       audio.setAttribute("preload", "auto");
       (audio as any).playsInline = true;
       audio.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
       audio.style.position = "fixed";
-      audio.style.opacity = "0";
-      audio.style.pointerEvents = "none";
       audio.style.bottom = "0";
-      audio.style.right = "0";
+      audio.style.left = "0";
+      audio.style.width = "1px";
+      audio.style.height = "1px";
+      audio.style.opacity = "0.01";
+      audio.style.pointerEvents = "none";
+      audio.style.zIndex = "-999";
 
       audio.addEventListener("timeupdate", () => {
         if (!this.isYtMode && this.activeTrack) {
           this.trackState.currentTime = audio.currentTime || 0;
+          this.updateMediaSessionPosition();
           this.emitTrackState();
         }
       });
       audio.addEventListener("loadedmetadata", () => {
         if (!this.isYtMode && this.activeTrack) {
           this.trackState.duration = audio.duration || 0;
+          this.updateMediaSessionPosition();
           this.emitTrackState();
         }
       });
       audio.addEventListener("play", () => {
         if (!this.isYtMode && this.activeTrack) {
           this.trackState.isPlaying = true;
+          this.startBackgroundKeeper();
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            try { navigator.mediaSession.playbackState = "playing"; } catch {}
+          }
           this.emitTrackState();
         }
       });
       audio.addEventListener("pause", () => {
         if (!this.isYtMode && this.activeTrack) {
           this.trackState.isPlaying = false;
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            try { navigator.mediaSession.playbackState = "paused"; } catch {}
+          }
           this.emitTrackState();
         }
       });
       audio.addEventListener("ended", () => {
         if (!this.isYtMode) {
           this.trackState.isPlaying = false;
+          this.stopBackgroundKeeper();
+          if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+            try { navigator.mediaSession.playbackState = "none"; } catch {}
+          }
           this.emitTrackState();
         }
       });
