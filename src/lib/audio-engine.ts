@@ -1,6 +1,7 @@
 /**
  * Blowmind audio engine — genera ruido y frecuencias binaurales en tiempo real
- * con la Web Audio API (sin archivos de audio).
+ * con la Web Audio API, puente HTML5 Audio y soporte de MediaSession para reproducción
+ * ininterrumpida en segundo plano y pantalla de bloqueo en móviles.
  */
 
 export type SoundId =
@@ -71,6 +72,10 @@ type Nodes = {
   stop: () => void;
 };
 
+// WAV de silencio de 1 segundo para anclar la sesión de audio en iOS/Android
+const SILENT_AUDIO_URI =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
 function noiseBuffer(ctx: AudioContext, kind: "white" | "brown" | "pink") {
   const seconds = 4;
   const buffer = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate);
@@ -102,6 +107,8 @@ export class AudioEngine {
   private master: GainNode | null = null;
   private _volume = 0.5;
   private _playing: SoundId | null = null;
+  private silentAudioEl: HTMLAudioElement | null = null;
+  private alarmInterval: number | null = null;
 
   get playing() {
     return this._playing;
@@ -122,8 +129,81 @@ export class AudioEngine {
       this.master.gain.value = this._volume;
       this.master.connect(this.ctx.destination);
     }
-    if (this.ctx.state === "suspended") void this.ctx.resume();
+    if (this.ctx.state === "suspended") {
+      void this.ctx.resume();
+    }
+    this.ensureSilentCarrier();
     return this.ctx;
+  }
+
+  /**
+   * Elemento de audio silencioso en bucle para forzar a iOS Safari y Android
+   * a mantener vivo el proceso de audio cuando la pantalla se apaga o la app pasa a segundo plano.
+   */
+  private ensureSilentCarrier() {
+    if (typeof window === "undefined") return;
+    if (!this.silentAudioEl) {
+      const audio = document.createElement("audio");
+      audio.src = SILENT_AUDIO_URI;
+      audio.loop = true;
+      (audio as any).playsInline = true;
+      audio.setAttribute("playsinline", "true");
+      audio.setAttribute("webkit-playsinline", "true");
+      audio.volume = 0.01;
+      this.silentAudioEl = audio;
+      document.body.appendChild(audio);
+    }
+  }
+
+  private startBackgroundSession(title: string, artist = "Blowmind · Foco & Bienestar") {
+    this.ensureSilentCarrier();
+    if (this.silentAudioEl) {
+      this.silentAudioEl.play().catch(() => {
+        // En algunos casos requiere interacción del usuario
+      });
+    }
+
+    // Configuración de la API MediaSession para pantalla de bloqueo
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title,
+          artist,
+          album: "Frecuencias & Bienestar Mental",
+          artwork: [
+            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        });
+        navigator.mediaSession.playbackState = "playing";
+
+        navigator.mediaSession.setActionHandler("play", () => {
+          if (this.ctx?.state === "suspended") void this.ctx.resume();
+          if (this.silentAudioEl) void this.silentAudioEl.play();
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+          this.stop();
+        });
+        navigator.mediaSession.setActionHandler("stop", () => {
+          this.stop();
+        });
+      } catch (e) {
+        console.warn("MediaSession API error:", e);
+      }
+    }
+  }
+
+  private stopBackgroundSession() {
+    if (this.silentAudioEl) {
+      this.silentAudioEl.pause();
+    }
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.playbackState = "none";
+      } catch {
+        // ignore
+      }
+    }
   }
 
   setVolume(v: number) {
@@ -137,6 +217,8 @@ export class AudioEngine {
     const node = this.current;
     this.current = null;
     this._playing = null;
+    this.stopBackgroundSession();
+
     if (!node || !this.ctx) return;
     const t = this.ctx.currentTime;
     node.gain.gain.cancelScheduledValues(t);
@@ -209,6 +291,9 @@ export class AudioEngine {
 
     gain.gain.setTargetAtTime(0.9, ctx.currentTime, fadeIn / 3);
     this._playing = id;
+
+    // Activar soporte en segundo plano y pantalla de bloqueo
+    this.startBackgroundSession(preset.nombre, "Blowmind · Frecuencias");
     return true;
   }
 
@@ -241,8 +326,6 @@ export class AudioEngine {
     osc.stop(t + duration + 0.4);
   }
 
-  private alarmInterval: number | null = null;
-
   /**
    * Reproduce una melodía de alarma rica y rítmica que suena continuamente hasta cancelarla
    */
@@ -250,6 +333,9 @@ export class AudioEngine {
     this.stopAlarm();
     const ctx = this.ensure();
     if (ctx.state === "suspended") void ctx.resume();
+
+    // Iniciar sesión en segundo plano para que no se pause con la pantalla bloqueada
+    this.startBackgroundSession("⏰ Alarma Activa", "Blowmind · Alarma de Bienestar");
 
     // Notas de melodías (frecuencias en Hz)
     const melodias: Record<string, number[]> = {
@@ -269,6 +355,8 @@ export class AudioEngine {
 
     const tocarNota = () => {
       if (!this.ctx) return;
+      if (this.ctx.state === "suspended") void this.ctx.resume();
+
       const freq = escala[paso % escala.length]!;
       paso++;
 
@@ -280,7 +368,10 @@ export class AudioEngine {
       osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
 
       gain.gain.setValueAtTime(0.001, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.35 * Math.max(0.4, this._volume), this.ctx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(
+        0.35 * Math.max(0.4, this._volume),
+        this.ctx.currentTime + 0.04
+      );
       gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 1.2);
 
       osc.connect(gain);
@@ -301,6 +392,7 @@ export class AudioEngine {
       this.alarmInterval = null;
     }
     this.stop(0.4);
+    this.stopBackgroundSession();
   }
 
   /**
@@ -319,6 +411,8 @@ export class AudioEngine {
           src.start(0);
         });
       }
+      this.ensureSilentCarrier();
+
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
       window.removeEventListener("touchstart", unlock);

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Volume2, VolumeX, RotateCcw, Play, Pause, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAudioEngine } from "@/lib/audio-engine";
+import { getBackgroundTimer } from "@/lib/background-timer";
 import { cn } from "@/lib/utils";
 import { useScrollLock } from "@/hooks/useScrollLock";
+import { useWakeLock } from "@/hooks/useWakeLock";
 
 export type Phase = { label: string; seconds: number; scale: number };
 
@@ -83,6 +85,8 @@ export function BreathSession({
 
   // Lock scrolling when breathing is active
   useScrollLock(running);
+  // Mantener la pantalla encendida durante la respiración
+  useWakeLock(running);
 
   const phase = protocol.phases[phaseIndex]!;
   const totalSeconds = useMemo(
@@ -99,7 +103,9 @@ export function BreathSession({
 
   useEffect(() => {
     if (!running) return;
-    const timer = window.setInterval(() => {
+    const bgTimer = getBackgroundTimer();
+
+    const tick = () => {
       setRemaining((r) => {
         if (r > 1) return r - 1;
         setPhaseIndex((i) => {
@@ -111,9 +117,13 @@ export function BreathSession({
         });
         return protocol.phases[(phaseIndex + 1) % protocol.phases.length]!.seconds;
       });
-      if (navigator.vibrate && remaining === 1) navigator.vibrate(25);
-    }, 1000);
-    return () => window.clearInterval(timer);
+      if (typeof navigator !== "undefined" && navigator.vibrate && remaining === 1) {
+        navigator.vibrate(25);
+      }
+    };
+
+    bgTimer.setInterval("breath-session-timer", tick, 1000);
+    return () => bgTimer.clearInterval("breath-session-timer");
   }, [running, protocol, sonido, phaseIndex, remaining]);
 
   useEffect(() => {

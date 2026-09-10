@@ -30,6 +30,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { SOUND_PRESETS, getAudioEngine, type SoundId } from "@/lib/audio-engine";
+import { getBackgroundTimer } from "@/lib/background-timer";
+import { useWakeLock } from "@/hooks/useWakeLock";
 import { extractYouTubeVideoId, isYouTubeUrl } from "@/lib/youtube-audio";
 import { procesarCancionServerFn } from "@/lib/soundtrack.functions";
 import {
@@ -98,32 +100,69 @@ function Frecuencias() {
   const [volumen, setVolumen] = useState(50);
   const [minutos, setMinutos] = useState(0);
   const [restante, setRestante] = useState(0);
+  const endTimeRef = useRef<number | null>(null);
+
+  // Mantener pantalla encendida si hay audio activo
+  useWakeLock(!!playing);
 
   useEffect(() => {
     engine.setVolume(volumen / 100);
   }, [volumen, engine]);
 
   useEffect(() => {
-    if (restante <= 0) return;
-    const t = window.setInterval(() => {
-      setRestante((r) => {
-        if (r <= 1) {
-          engine.stop();
-          setPlaying(null);
-          toast.success("Temporizador finalizado");
-          return 0;
-        }
-        return r - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(t);
+    if (restante <= 0) {
+      endTimeRef.current = null;
+      return;
+    }
+
+    if (!endTimeRef.current) {
+      endTimeRef.current = Date.now() + restante * 1000;
+    }
+
+    const timer = getBackgroundTimer();
+    const updateCountdown = () => {
+      if (!endTimeRef.current) return;
+      const left = Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000));
+      setRestante(left);
+      if (left <= 0) {
+        engine.stop();
+        setPlaying(null);
+        endTimeRef.current = null;
+        timer.clearInterval("audio-frequencies-timer");
+        toast.success("Temporizador finalizado");
+      }
+    };
+
+    timer.setInterval("audio-frequencies-timer", updateCountdown, 1000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        updateCountdown();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", updateCountdown);
+
+    return () => {
+      timer.clearInterval("audio-frequencies-timer");
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", updateCountdown);
+    };
   }, [restante, engine]);
 
   const toggle = (id: SoundId) => {
     const on = engine.play(id);
     setPlaying(on ? id : null);
-    if (on && minutos > 0) setRestante(minutos * 60);
-    if (!on) setRestante(0);
+    if (on && minutos > 0) {
+      const sec = minutos * 60;
+      endTimeRef.current = Date.now() + sec * 1000;
+      setRestante(sec);
+    }
+    if (!on) {
+      endTimeRef.current = null;
+      setRestante(0);
+    }
   };
 
   return (
@@ -329,6 +368,13 @@ function BandaSonora() {
     if (ytPlayerRef.current?.pauseVideo) {
       ytPlayerRef.current.pauseVideo();
     }
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.playbackState = "none";
+      } catch {
+        // ignore
+      }
+    }
     setTrackActivo(null);
     setIsPlaying(false);
     setCurrentTime(0);
@@ -339,6 +385,38 @@ function BandaSonora() {
   const playTrack = (s: { id: string; nombre_cancion: string; artista: string | null; categoria_momento: string; url_enlace: string }) => {
     const isThisActive = trackActivo?.id === s.id;
     const ytId = extractYouTubeVideoId(s.url_enlace);
+
+    // Configurar metadatos en la pantalla de bloqueo (MediaSession)
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: s.nombre_cancion,
+          artist: s.artista || "Banda Sonora Vital",
+          album: `Blowmind · ${s.categoria_momento}`,
+          artwork: [
+            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        });
+        navigator.mediaSession.playbackState = "playing";
+
+        navigator.mediaSession.setActionHandler("play", () => {
+          if (audioRef.current) audioRef.current.play();
+          if (ytPlayerRef.current?.playVideo) ytPlayerRef.current.playVideo();
+          setIsPlaying(true);
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+          if (audioRef.current) audioRef.current.pause();
+          if (ytPlayerRef.current?.pauseVideo) ytPlayerRef.current.pauseVideo();
+          setIsPlaying(false);
+        });
+        navigator.mediaSession.setActionHandler("stop", () => {
+          detenerReproduccion();
+        });
+      } catch (e) {
+        console.warn("MediaSession API error:", e);
+      }
+    }
 
     if (isThisActive) {
       if (isPlaying) {

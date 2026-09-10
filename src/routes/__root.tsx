@@ -130,6 +130,18 @@ function RootComponent() {
   const router = useRouter();
 
   useEffect(() => {
+    // Registrar Service Worker para notificaciones nativas y soporte de alarmas en segundo plano
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((reg) => {
+          console.log("[PWA] Service Worker registrado con éxito:", reg.scope);
+        })
+        .catch((err) => {
+          console.warn("[PWA] Error registrando Service Worker:", err);
+        });
+    }
+
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED")
         return;

@@ -566,15 +566,54 @@ function Perfil() {
             </div>
           )}
 
-          {/* Permiso de notificaciones */}
-          {permiso !== "granted" ? (
-            <button
-              className="text-xs text-primary underline"
-              onClick={() => void Notification.requestPermission().then(setPermiso)}
-            >
-              Activar notificaciones del navegador para avisos en segundo plano
-            </button>
-          ) : null}
+          {/* Estado de segundo plano y permisos de notificación */}
+          <div className="rounded-2xl border border-border/80 bg-secondary/20 p-4 space-y-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <div className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl",
+                  permiso === "granted" ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"
+                )}>
+                  {permiso === "granted" ? (
+                    <CheckCircle className="h-4 w-4" />
+                  ) : (
+                    <BellRing className="h-4 w-4" />
+                  )}
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground">
+                    {permiso === "granted"
+                      ? "Modo Segundo Plano & Notificaciones Activo"
+                      : "Avisos con Pantalla Bloqueada"}
+                  </h4>
+                  <p className="text-[0.7rem] text-muted-foreground mt-0.5 leading-relaxed">
+                    {permiso === "granted"
+                      ? "Las alarmas y frecuencias continuarán activas en segundo plano con controles en pantalla de bloqueo y vibración."
+                      : "Para que las alarmas suenen puntuales y vibren cuando el móvil esté en reposo o con la pantalla apagada, activa las notificaciones."}
+                  </p>
+                </div>
+              </div>
+              {permiso !== "granted" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (typeof Notification !== "undefined") {
+                      void Notification.requestPermission().then((res) => {
+                        setPermiso(res);
+                        if (res === "granted") {
+                          toast.success("Notificaciones en segundo plano activadas");
+                        }
+                      });
+                    }
+                  }}
+                  className="rounded-full shrink-0 text-xs h-8 border-primary/40 text-primary hover:bg-primary/10"
+                >
+                  Activar
+                </Button>
+              )}
+            </div>
+          </div>
 
           {/* Lista de Alarmas Guardadas */}
           <div className="space-y-3">
