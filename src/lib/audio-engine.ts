@@ -836,7 +836,7 @@ export class AudioEngine {
     }
     this.stopYtTicker();
 
-    // Establecer estado activo
+    // Establecer estado activo de la nueva pista
     this.activeTrack = track;
     this.trackState.track = track;
     this.trackState.currentTime = 0;
@@ -845,17 +845,17 @@ export class AudioEngine {
     this.emitTrackState();
 
     this.setupTrackMediaSession(track);
+    this.startBackgroundKeeper();
 
     const isYt = isYouTubeUrl(track.url);
+    const directUrl = resolvePlayableUrlSync(track.url);
 
-    if (!isYt) {
-      // ── CASO A: PISTA NATIVA / SUPABASE / LOCAL / MP3 / WAV ──
-      // Modo nativo directo: se reproduce de forma 100% síncrona e inmediata en el tick del click
+    if (directUrl && !isYt) {
+      // ── MODO 1: REPRODUCCIÓN NATIVA INMEDIATA (99% de los casos: plantillas, Supabase Storage, MP3, M4A) ──
       this.isYtMode = false;
       this.ensureTrackAudioElement();
       if (!this.trackAudioEl) return;
 
-      const directUrl = resolvePlayableUrlSync(track.url);
       this.trackAudioEl.src = directUrl;
       this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
       this.trackAudioEl.currentTime = 0;
@@ -870,9 +870,8 @@ export class AudioEngine {
           this.emitTrackState();
         }
       } catch (err) {
-        // Si la URL directa falla (ej. si requiere URL firmada de Supabase)
         if (this.playSessionId !== currentSession) return;
-        console.warn("Fallo reproducción directa, intentando resolución firmada...", err);
+        console.warn("Fallo reproducción directa, resolviendo URL autorizada...", err);
         try {
           const resolved = await resolvePlayableUrl(track.url, track.id);
           if (this.playSessionId === currentSession && resolved && this.trackAudioEl) {
@@ -881,7 +880,7 @@ export class AudioEngine {
             this.trackState.isPlaying = true;
             this.emitTrackState();
           }
-        } catch (resErr) {
+        } catch {
           if (this.playSessionId === currentSession) {
             this.trackState.isPlaying = false;
             this.emitTrackState();
@@ -889,63 +888,48 @@ export class AudioEngine {
         }
       }
     } else {
-      // ── CASO B: ENLACE YOUTUBE ──
-      // Primero verificar si ya hay una versión procesada o descargada en Supabase
-      const syncResolved = resolvePlayableUrlSync(track.url);
-      if (syncResolved && !isYouTubeUrl(syncResolved)) {
-        this.isYtMode = false;
-        this.ensureTrackAudioElement();
-        if (this.trackAudioEl) {
-          this.trackAudioEl.src = syncResolved;
-          this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
-          this.trackAudioEl.currentTime = 0;
-          try {
+      // ── MODO 2: ENLACE YOUTUBE NO DESCARGADO ──
+      // Resolver audio en servidor a Supabase Storage y reproducir nativo
+      try {
+        const resolved = await resolvePlayableUrl(track.url, track.id);
+        if (this.playSessionId !== currentSession) return;
+
+        if (resolved && !isYouTubeUrl(resolved)) {
+          track.url = resolved;
+          this.isYtMode = false;
+          this.ensureTrackAudioElement();
+          if (this.trackAudioEl) {
+            this.trackAudioEl.src = resolved;
+            this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
+            this.trackAudioEl.currentTime = 0;
             await this.trackAudioEl.play();
-            if (this.playSessionId === currentSession) {
-              this.trackState.isPlaying = true;
-              this.emitTrackState();
-              return;
-            }
-          } catch {}
+            this.trackState.isPlaying = true;
+            this.emitTrackState();
+            return;
+          }
         }
+      } catch (e) {
+        console.warn("Error resolviendo audio de YouTube:", e);
       }
 
-      // Si aún no está en Supabase, activar el puente IFrame oficial
+      // Fallback a YouTube IFrame si no se pudo descargar
+      if (this.playSessionId !== currentSession) return;
       this.isYtMode = true;
-      if (this.trackAudioEl) {
-        this.trackAudioEl.pause();
-        this.trackAudioEl.src = "";
-      }
-
       const videoId = extractYouTubeVideoId(track.url);
       if (videoId) {
         const player = await this.ensureYouTubePlayer();
-        if (this.playSessionId !== currentSession) return;
-
-        if (player) {
+        if (this.playSessionId === currentSession && player) {
           try {
             player.setVolume((this.trackState.isMuted ? 0 : this.trackState.volume) * 100);
             if (typeof player.loadVideoById === "function") {
               player.loadVideoById(videoId);
               player.playVideo();
-            } else if (typeof player.cueVideoById === "function") {
-              player.cueVideoById(videoId);
-              player.playVideo();
             }
             this.trackState.isPlaying = true;
             this.startYtTicker();
             this.emitTrackState();
-          } catch (e) {
-            console.warn("Error en reproducción YouTube IFrame:", e);
-          }
+          } catch {}
         }
-
-        // En segundo plano, migrar a Supabase Storage para que las siguientes reproducciones sean nativas
-        void resolvePlayableUrl(track.url, track.id).then((savedUrl) => {
-          if (savedUrl && !isYouTubeUrl(savedUrl) && track) {
-            track.url = savedUrl;
-          }
-        });
       }
     }
   }
@@ -968,6 +952,7 @@ export class AudioEngine {
     if (this.activeTrack) {
       this.setupTrackMediaSession(this.activeTrack);
     }
+    this.startBackgroundKeeper();
     if (this.isYtMode && this.ytPlayer?.playVideo) {
       try {
         this.ytPlayer.playVideo();
@@ -988,6 +973,7 @@ export class AudioEngine {
 
   stopTrack() {
     this.playSessionId++;
+    this.stopBackgroundKeeper();
     if (this.isYtMode && this.ytPlayer?.stopVideo) {
       try { this.ytPlayer.stopVideo(); } catch {}
       this.stopYtTicker();

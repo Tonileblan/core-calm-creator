@@ -171,37 +171,47 @@ export function parseStorageRef(url: string): { bucket: string; path: string } |
  */
 export function resolvePlayableUrlSync(url: string): string {
   if (!url) return "";
-  const trimmed = url.trim();
+  let trimmed = url.trim();
+
+  // Si es un audio local .wav, migrarlo a .m4a inmediatamente para soporte total de iOS
+  if (trimmed.endsWith(".wav")) {
+    trimmed = trimmed.replace(/\.wav$/, ".m4a");
+  }
 
   // Si es un audio local bundled en la app
   if (trimmed.startsWith("/") || trimmed.startsWith("./")) {
     return trimmed;
   }
 
-  // Si es una URL externa directa de audio o Supabase
+  // Si es una URL de Supabase Storage o directa
   if (!isYouTubeUrl(trimmed)) {
     return trimmed;
   }
 
-  return trimmed;
+  return "";
 }
 
 /**
  * Resuelve una URL reproducible 100% válida.
- * 1. Si es audio local bundled (/audio/...), se reproduce inmediatamente.
- * 2. Si es de Supabase Storage, genera una URL firmada autorizada para saltar cualquier restricción de RLS.
+ * 1. Si es audio local bundled (/audio/...), se reproduce inmediatamente en formato AAC .m4a.
+ * 2. Si ya es una URL pública de Supabase Storage, se devuelve directamente sin demoras.
  * 3. Si es un enlace de YouTube que no se había procesado, el servidor lo descarga y lo migra automáticamente a Supabase Storage.
+ * 4. Si es de Supabase Storage privado, genera una URL firmada autorizada.
  */
 export async function resolvePlayableUrl(url: string, trackId?: string, expiresIn = 7200): Promise<string> {
   if (!url) return "";
-  const trimmed = url.trim();
+  let trimmed = url.trim();
+
+  if (trimmed.endsWith(".wav")) {
+    trimmed = trimmed.replace(/\.wav$/, ".m4a");
+  }
 
   // 1. Audio local
   if (trimmed.startsWith("/") || trimmed.startsWith("./")) {
     return trimmed;
   }
 
-  // 2. Si es YouTube legacy no procesado, migrar a Supabase Storage automáticamente
+  // 2. Si es YouTube legacy no procesado, migrar a Supabase Storage automáticamente en servidor
   if (isYouTubeUrl(trimmed)) {
     try {
       const res = await resolverUrlAudioServerFn({ data: { id: trackId, url: trimmed } });
@@ -213,7 +223,12 @@ export async function resolvePlayableUrl(url: string, trackId?: string, expiresI
     }
   }
 
-  // 3. Si es de Supabase Storage, generar URL firmada autorizada
+  // 3. Si ya es una URL pública directa de Supabase
+  if (trimmed.includes("/storage/v1/object/public/")) {
+    return trimmed;
+  }
+
+  // 4. Si es de Supabase Storage privado, generar URL firmada autorizada
   const ref = parseStorageRef(trimmed);
   if (ref) {
     try {
