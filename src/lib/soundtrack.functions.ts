@@ -138,8 +138,18 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
           finalAudioUrl = pub.publicUrl;
         }
       } catch (err: any) {
-        throw new Error(err.message || "No se pudo procesar el video de YouTube.");
+        // Si YouTube bloquea la descarga, guardamos la canción con su enlace original
+        console.warn("Descarga de YouTube no disponible, se usa el enlace original:", err?.message);
+        try {
+          const meta = await getYouTubeMetadata(url);
+          if (!nombre && meta?.title) nombre = meta.title;
+          if (!artista && meta?.author) artista = meta.author;
+        } catch {
+          // Sin metadatos disponibles
+        }
+        finalAudioUrl = url.trim();
       }
+
     } else if (url.startsWith("http://") || url.startsWith("https://")) {
       // Si es un enlace de audio directo (ej. MP3 o WAV), intentar descargarlo al storage para independencia total
       try {
