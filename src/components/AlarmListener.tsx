@@ -30,7 +30,6 @@ import {
   parseAlarmaConfig,
   type AlarmaConfig,
 } from "@/lib/alarm-types";
-import { extractYouTubeVideoId } from "@/lib/youtube-audio";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,7 +57,6 @@ export function AlarmListener() {
   } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const ytPlayerRef = useRef<any>(null);
   const disparadas = useRef<Set<string>>(new Set());
 
   // Mantener la pantalla encendida mientras suena la alarma
@@ -134,47 +132,13 @@ export function AlarmListener() {
       const urlEfectiva = config.sonidoUrl || cancion?.url_enlace;
 
       if (urlEfectiva) {
-        const ytId = extractYouTubeVideoId(urlEfectiva);
-        if (ytId) {
-          if ((window as any).YT && (window as any).YT.Player) {
-            try {
-              if (!ytPlayerRef.current) {
-                ytPlayerRef.current = new (window as any).YT.Player("alarm-yt-player", {
-                  height: "200",
-                  width: "200",
-                  videoId: ytId,
-                  playerVars: {
-                    autoplay: 1,
-                    controls: 0,
-                    disablekb: 1,
-                    playsinline: 1,
-                  },
-                  events: {
-                    onReady: (e: any) => {
-                      e.target.setVolume(100);
-                      e.target.playVideo();
-                    },
-                  },
-                });
-              } else {
-                ytPlayerRef.current.loadVideoById(ytId);
-                ytPlayerRef.current.setVolume(100);
-                ytPlayerRef.current.playVideo();
-              }
-            } catch (e) {
-              console.warn("Error reproduciendo YouTube en alarma:", e);
-            }
-          }
-        } else {
-          if (audioRef.current) {
-            audioRef.current.src = urlEfectiva;
-            audioRef.current.volume = 0.95;
-            audioRef.current.load();
-            audioRef.current.play().catch((err) => {
-              console.warn("Autoplay bloqueado por el navegador (esperando toque):", err);
-            });
-          }
-        }
+        void getAudioEngine().playTrack({
+          id: config.sonidoId,
+          nombre: config.sonidoTitulo || cancion?.nombre_cancion || "Música de Alarma",
+          artista: cancion?.artista || "Blowmind · Alarma",
+          url: urlEfectiva,
+          categoria: "despertar",
+        });
         return;
       }
     }
@@ -223,6 +187,7 @@ export function AlarmListener() {
 
   const apagarAlarma = useCallback(() => {
     getAudioEngine().stopAlarm();
+    getAudioEngine().stopTrack();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
@@ -321,15 +286,6 @@ export function AlarmListener() {
     };
   }, [apagarAlarma]);
 
-  // Asegurar carga de YouTube Iframe API
-  useEffect(() => {
-    if (typeof window !== "undefined" && !(window as any).YT) {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(tag);
-    }
-  }, []);
-
   // Escuchar evento personalizado para probar alarma de inmediato desde el perfil
   useEffect(() => {
     const handleTest = (e: CustomEvent<AlarmaRow>) => {
@@ -347,10 +303,6 @@ export function AlarmListener() {
   return (
     <>
       <audio ref={audioRef} loop preload="auto" playsInline />
-      <div
-        id="alarm-yt-player"
-        className="fixed -bottom-96 -right-96 opacity-0 pointer-events-none w-1 h-1 overflow-hidden"
-      />
 
       {/* Pantalla modal inmersiva de alarma */}
       {alarmaSonando && config && alarma && (

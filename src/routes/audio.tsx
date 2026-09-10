@@ -9,7 +9,6 @@ import {
   Timer,
   Trash2,
   Music4,
-  ExternalLink,
   Loader2,
   Upload,
   Cloud,
@@ -29,15 +28,13 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { SOUND_PRESETS, getAudioEngine, type SoundId } from "@/lib/audio-engine";
+import { SOUND_PRESETS, getAudioEngine, useTrackPlayer, type SoundId } from "@/lib/audio-engine";
 import { getBackgroundTimer } from "@/lib/background-timer";
 import { useWakeLock } from "@/hooks/useWakeLock";
-import { extractYouTubeVideoId, isYouTubeUrl } from "@/lib/youtube-audio";
 import { procesarCancionServerFn } from "@/lib/soundtrack.functions";
 import {
   uploadAudioToSupabase,
   eliminarCancionDeSupabase,
-  resolvePlayableUrl,
 } from "@/lib/supabase-soundtrack";
 import { cn } from "@/lib/utils";
 
@@ -242,13 +239,40 @@ function Frecuencias() {
   );
 }
 
-type TrackActivo = {
-  id: string;
-  nombre: string;
-  artista: string | null;
-  url: string;
-  categoria: string;
-};
+const PLANTILLAS_SONORAS = [
+  {
+    id: "plantilla-despertar",
+    nombre: "Amanecer Sereno",
+    artista: "Blowmind Audio Lab",
+    categoria: "despertar",
+    descripcion: "Frecuencia acústica suave para iniciar el día con vitalidad y enfoque claro.",
+    url: "https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3",
+  },
+  {
+    id: "plantilla-celebrar",
+    nombre: "Triunfo & Vitalidad",
+    artista: "Blowmind Audio Lab",
+    categoria: "celebrar",
+    descripcion: "Acordes optimistas para anclar momentos de gratitud, progreso y éxito.",
+    url: "https://assets.mixkit.co/music/preview/mixkit-sun-and-sky-578.mp3",
+  },
+  {
+    id: "plantilla-relajacion",
+    nombre: "Calma Interior 432Hz",
+    artista: "Blowmind Audio Lab",
+    categoria: "relajacion",
+    descripcion: "Paisaje sonoro orgánico para meditación, respiración y paz mental.",
+    url: "https://assets.mixkit.co/music/preview/mixkit-deep-urban-623.mp3",
+  },
+  {
+    id: "plantilla-dormir",
+    nombre: "Océano Nocturno Delta",
+    artista: "Blowmind Audio Lab",
+    categoria: "dormir",
+    descripcion: "Texturas envolventes para desacelerar la mente e inducir un sueño profundo.",
+    url: "https://assets.mixkit.co/music/preview/mixkit-sleepy-cat-135.mp3",
+  },
+];
 
 function BandaSonora() {
   const { user, signedIn } = useAuth();
@@ -258,56 +282,17 @@ function BandaSonora() {
   const [categoria, setCategoria] = useState<string>("celebrar");
   const [nombre, setNombre] = useState("");
   const [artista, setArtista] = useState("");
-  const [url, setUrl] = useState("");
+  const [enlaceAudio, setEnlaceAudio] = useState("");
+  const [mostrarEnlaceManual, setMostrarEnlaceManual] = useState(false);
   const [archivoAudio, setArchivoAudio] = useState<File | null>(null);
   const [progresoEstado, setProgresoEstado] = useState<string | null>(null);
 
-  // Estado del reproductor integrado universal
-  const [trackActivo, setTrackActivo] = useState<TrackActivo | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.8);
-  const [isMuted, setIsMuted] = useState(false);
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const ytPlayerRef = useRef<any>(null);
+  // Reproductor global persistente (no se detiene en segundo plano ni al cambiar de pestaña)
+  const player = useTrackPlayer();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const isYoutube = isYouTubeUrl(url);
-
   // Mantener pantalla activa mientras se reproduce música
-  useWakeLock(isPlaying);
-
-  // Manejar reconexión / no pausar en segundo plano
-  useEffect(() => {
-    const handleVis = () => {
-      if (isPlaying) {
-        if (audioRef.current && audioRef.current.paused && audioRef.current.src) {
-          audioRef.current.play().catch(() => {});
-        }
-      }
-    };
-    document.addEventListener("visibilitychange", handleVis);
-    window.addEventListener("focus", handleVis);
-    window.addEventListener("pageshow", handleVis);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVis);
-      window.removeEventListener("focus", handleVis);
-      window.removeEventListener("pageshow", handleVis);
-    };
-  }, [isPlaying]);
-
-  // Carga del script oficial de YouTube Iframe API para reproducción integrada en background
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (!(window as any).YT) {
-        const tag = document.createElement("script");
-        tag.src = "https://www.youtube.com/iframe_api";
-        document.body.appendChild(tag);
-      }
-    }
-  }, []);
+  useWakeLock(player.isPlaying);
 
   const { data: canciones = [] } = useQuery({
     queryKey: ["soundtrack", user?.id],
@@ -325,12 +310,12 @@ function BandaSonora() {
   const add = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Inicia sesión para guardar tus canciones.");
-      if (!archivoAudio && !url.trim()) {
-        throw new Error("Pega un enlace de YouTube o selecciona un archivo de audio.");
+      if (!archivoAudio && !enlaceAudio.trim()) {
+        throw new Error("Selecciona un archivo de audio (MP3/M4A/WAV) o ingresa un enlace.");
       }
 
       if (archivoAudio) {
-        setProgresoEstado("Subiendo archivo local a Supabase Storage...");
+        setProgresoEstado("Subiendo archivo de audio a tu almacenamiento en Supabase...");
         const publicUrl = await uploadAudioToSupabase(user.id, archivoAudio, archivoAudio.name);
         const songTitle = nombre.trim() || archivoAudio.name.replace(/\.[^/.]+$/, "");
         const { error } = await supabase.from("vital_soundtrack").insert({
@@ -342,13 +327,13 @@ function BandaSonora() {
         });
         if (error) throw error;
       } else {
-        setProgresoEstado("Descargando video/audio y guardando en Supabase...");
+        setProgresoEstado("Procesando y almacenando audio independiente en Supabase...");
         await procesar({
           data: {
             nombre: nombre.trim() || undefined,
             artista: artista.trim() || undefined,
             categoria,
-            url: url.trim(),
+            url: enlaceAudio.trim(),
           },
         });
       }
@@ -356,11 +341,36 @@ function BandaSonora() {
     onSuccess: () => {
       setNombre("");
       setArtista("");
-      setUrl("");
+      setEnlaceAudio("");
       setArchivoAudio(null);
+      setMostrarEnlaceManual(false);
       setProgresoEstado(null);
       void queryClient.invalidateQueries({ queryKey: ["soundtrack"] });
-      toast.success("Canción guardada y lista para reproducir");
+      toast.success("Canción guardada en tu Banda Sonora (independiente)");
+    },
+    onError: (e: Error) => {
+      setProgresoEstado(null);
+      toast.error(e.message);
+    },
+  });
+
+  const agregarPlantilla = useMutation({
+    mutationFn: async (plantilla: typeof PLANTILLAS_SONORAS[0]) => {
+      if (!user) throw new Error("Inicia sesión para guardar canciones.");
+      setProgresoEstado(`Añadiendo ${plantilla.nombre}...`);
+      const { error } = await supabase.from("vital_soundtrack").insert({
+        user_id: user.id,
+        nombre_cancion: plantilla.nombre,
+        artista: plantilla.artista,
+        categoria_momento: plantilla.categoria,
+        url_enlace: plantilla.url,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setProgresoEstado(null);
+      void queryClient.invalidateQueries({ queryKey: ["soundtrack"] });
+      toast.success("Pista añadida a tu Banda Sonora");
     },
     onError: (e: Error) => {
       setProgresoEstado(null);
@@ -370,8 +380,8 @@ function BandaSonora() {
 
   const del = useMutation({
     mutationFn: async (cancion: { id: string; url_enlace: string }) => {
-      if (trackActivo?.id === cancion.id) {
-        detenerReproduccion();
+      if (player.track?.id === cancion.id) {
+        player.stopTrack();
       }
       await eliminarCancionDeSupabase(cancion.id, cancion.url_enlace);
     },
@@ -382,211 +392,19 @@ function BandaSonora() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const detenerReproduccion = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-    }
-    if (ytPlayerRef.current?.pauseVideo) {
-      ytPlayerRef.current.pauseVideo();
-    }
-    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.playbackState = "none";
-      } catch {
-        // ignore
-      }
-    }
-    setTrackActivo(null);
-    setIsPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-  };
-
-  // Reproducción universal: reproduce directamente archivo Supabase o YouTube en segundo plano
-  const playTrack = (s: { id: string; nombre_cancion: string; artista: string | null; categoria_momento: string; url_enlace: string }) => {
-    const isThisActive = trackActivo?.id === s.id;
-    const ytId = extractYouTubeVideoId(s.url_enlace);
-
-    // Configurar metadatos en la pantalla de bloqueo (MediaSession)
-    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: s.nombre_cancion,
-          artist: s.artista || "Banda Sonora Vital",
-          album: `Blowmind · ${s.categoria_momento}`,
-          artwork: [
-            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-          ],
-        });
-        navigator.mediaSession.playbackState = "playing";
-
-        navigator.mediaSession.setActionHandler("play", () => {
-          if (audioRef.current) audioRef.current.play();
-          if (ytPlayerRef.current?.playVideo) ytPlayerRef.current.playVideo();
-          setIsPlaying(true);
-        });
-        navigator.mediaSession.setActionHandler("pause", () => {
-          if (audioRef.current) audioRef.current.pause();
-          if (ytPlayerRef.current?.pauseVideo) ytPlayerRef.current.pauseVideo();
-          setIsPlaying(false);
-        });
-        navigator.mediaSession.setActionHandler("stop", () => {
-          detenerReproduccion();
-        });
-      } catch (e) {
-        console.warn("MediaSession API error:", e);
-      }
-    }
-
-    if (isThisActive) {
-      if (isPlaying) {
-        if (ytId && ytPlayerRef.current?.pauseVideo) {
-          ytPlayerRef.current.pauseVideo();
-        } else if (audioRef.current) {
-          audioRef.current.pause();
-        }
-        setIsPlaying(false);
-      } else {
-        if (ytId && ytPlayerRef.current?.playVideo) {
-          ytPlayerRef.current.playVideo();
-        } else if (audioRef.current) {
-          audioRef.current.play().catch(() => toast.error("Error al reproducir audio"));
-        }
-        setIsPlaying(true);
-      }
-      return;
-    }
-
-    // Nuevo track seleccionado
-    setTrackActivo({
+  const handlePlayTrack = (s: { id: string; nombre_cancion: string; artista: string | null; categoria_momento: string; url_enlace: string }) => {
+    void player.playTrack({
       id: s.id,
       nombre: s.nombre_cancion,
       artista: s.artista,
       url: s.url_enlace,
       categoria: s.categoria_momento,
     });
-    setCurrentTime(0);
-    setDuration(0);
-
-    if (ytId) {
-      // Reproducir vía YouTube API
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-      }
-
-      if ((window as any).YT && (window as any).YT.Player) {
-        if (!ytPlayerRef.current) {
-          ytPlayerRef.current = new (window as any).YT.Player("flowmind-yt-audio-container", {
-            height: "1",
-            width: "1",
-            videoId: ytId,
-            playerVars: {
-              autoplay: 1,
-              controls: 0,
-              disablekb: 1,
-              fs: 0,
-              playsinline: 1,
-            },
-            events: {
-              onReady: (event: any) => {
-                event.target.setVolume(volume * 100);
-                event.target.playVideo();
-                setIsPlaying(true);
-              },
-              onStateChange: (event: any) => {
-                if (event.data === 1) setIsPlaying(true);
-                else if (event.data === 2 || event.data === 0) setIsPlaying(false);
-              },
-            },
-          });
-        } else {
-          ytPlayerRef.current.loadVideoById(ytId);
-          ytPlayerRef.current.setVolume(volume * 100);
-          ytPlayerRef.current.playVideo();
-          setIsPlaying(true);
-        }
-      } else {
-        toast.info("Iniciando reproductor...", { description: s.nombre_cancion });
-      }
-    } else {
-      // Reproducir vía HTML5 Audio nativo (Supabase storage / archivo local)
-      if (ytPlayerRef.current?.pauseVideo) {
-        ytPlayerRef.current.pauseVideo();
-      }
-
-      if (audioRef.current) {
-        const el = audioRef.current;
-        // El bucket es privado: se firma la URL justo antes de reproducir
-        void resolvePlayableUrl(s.url_enlace).then((playableUrl) => {
-          el.src = playableUrl;
-          el.volume = isMuted ? 0 : volume;
-          el.play().then(() => setIsPlaying(true)).catch(() => {
-            toast.error("Error al reproducir el archivo de audio.");
-            setIsPlaying(false);
-          });
-        });
-      }
-    }
-  };
-
-  // Sincronización continua de tiempo de reproducción
-  useEffect(() => {
-    if (!isPlaying) return;
-    const interval = window.setInterval(() => {
-      const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
-      if (ytId && ytPlayerRef.current?.getCurrentTime) {
-        const cur = ytPlayerRef.current.getCurrentTime() || 0;
-        const dur = ytPlayerRef.current.getDuration() || 0;
-        setCurrentTime(cur);
-        if (dur > 0) setDuration(dur);
-      } else if (audioRef.current) {
-        setCurrentTime(audioRef.current.currentTime || 0);
-        if (audioRef.current.duration) setDuration(audioRef.current.duration);
-      }
-    }, 300);
-    return () => window.clearInterval(interval);
-  }, [isPlaying, trackActivo]);
-
-  const seek = (seconds: number) => {
-    const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
-    if (ytId && ytPlayerRef.current?.seekTo) {
-      ytPlayerRef.current.seekTo(seconds, true);
-      setCurrentTime(seconds);
-    } else if (audioRef.current) {
-      audioRef.current.currentTime = seconds;
-      setCurrentTime(seconds);
-    }
   };
 
   const skipTime = (delta: number) => {
-    const newTime = Math.max(0, Math.min(duration, currentTime + delta));
-    seek(newTime);
-  };
-
-  const changeVolume = (v: number) => {
-    setVolume(v);
-    setIsMuted(false);
-    if (audioRef.current) {
-      audioRef.current.volume = v;
-      audioRef.current.muted = false;
-    }
-    if (ytPlayerRef.current?.setVolume) {
-      ytPlayerRef.current.setVolume(v * 100);
-      ytPlayerRef.current.unMute();
-    }
-  };
-
-  const toggleMute = () => {
-    const newMute = !isMuted;
-    setIsMuted(newMute);
-    if (audioRef.current) audioRef.current.muted = newMute;
-    if (ytPlayerRef.current) {
-      if (newMute) ytPlayerRef.current.mute();
-      else ytPlayerRef.current.unMute();
-    }
+    const newTime = Math.max(0, Math.min(player.duration, player.currentTime + delta));
+    player.seekTrack(newTime);
   };
 
   const formatTime = (secs: number) => {
@@ -602,33 +420,24 @@ function BandaSonora() {
         <Link to="/auth" className="text-primary underline">
           Inicia sesión
         </Link>{" "}
-        para crear tu diario musical de estados de ánimo y guardar tus canciones en Supabase.
+        para crear tu diario musical de estados de ánimo y alojar tus canciones en Supabase de forma 100% independiente.
       </p>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Contenedores ocultos de audio nativo y YouTube iframe */}
-      <audio
-        ref={audioRef}
-        playsInline
-        webkit-playsinline="true"
-        preload="auto"
-        crossOrigin="anonymous"
-        onTimeUpdate={() => {
-          if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
-        }}
-        onLoadedMetadata={() => {
-          if (audioRef.current) setDuration(audioRef.current.duration);
-        }}
-        onEnded={() => setIsPlaying(false)}
-        onError={() => setIsPlaying(false)}
-      />
-      <div id="flowmind-yt-audio-container" className="hidden pointer-events-none opacity-0 w-0 h-0 overflow-hidden" />
-
-      {/* Formulario de adición */}
+      {/* Formulario de subida de audio */}
       <div className="surface-panel space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Momento vital
+          </Label>
+          <span className="text-[0.65rem] text-primary font-medium flex items-center gap-1">
+            <Cloud className="h-3 w-3" /> Audio nativo sin dependencias
+          </span>
+        </div>
+
         <div className="flex flex-wrap gap-2">
           {CATEGORIAS.map((c) => (
             <button
@@ -637,7 +446,7 @@ function BandaSonora() {
               className={
                 "rounded-full border px-3 py-1.5 text-xs transition-colors cursor-pointer " +
                 (categoria === c.id
-                  ? "border-primary bg-primary/15 text-primary font-semibold"
+                  ? "border-primary bg-primary/15 text-primary font-semibold shadow-sm"
                   : "border-border text-muted-foreground hover:border-primary/40")
               }
             >
@@ -646,75 +455,104 @@ function BandaSonora() {
           ))}
         </div>
 
-        <div className="space-y-2">
+        {/* Zona de subida de archivo de audio principal */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              setArchivoAudio(file);
+              setEnlaceAudio("");
+              if (!nombre) setNombre(file.name.replace(/\.[^/.]+$/, ""));
+            }
+          }}
+        />
+
+        {!archivoAudio && !mostrarEnlaceManual && (
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border hover:border-primary/60 bg-secondary/30 hover:bg-primary/5 p-6 text-center cursor-pointer transition-all duration-200"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary group-hover:scale-110 transition-transform mb-3">
+              <Upload className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-semibold text-foreground">
+              Sube tu canción (MP3, M4A, WAV, AAC, FLAC)
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              Se almacena directamente en tu nube de Supabase para sonar siempre en segundo plano y con la pantalla bloqueada.
+            </p>
+          </div>
+        )}
+
+        {archivoAudio && (
+          <div className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/20 text-primary">
+                  <Music4 className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-foreground">
+                    {archivoAudio.name}
+                  </p>
+                  <p className="text-[0.65rem] text-muted-foreground">
+                    {(archivoAudio.size / (1024 * 1024)).toFixed(2)} MB · Archivo de audio listo
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setArchivoAudio(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                className="text-xs text-destructive hover:underline cursor-pointer px-2 py-1"
+              >
+                Cambiar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {mostrarEnlaceManual && (
+          <div className="space-y-2 animate-in fade-in duration-150">
+            <Label className="text-xs text-muted-foreground">Enlace de audio o descarga</Label>
+            <Input
+              value={enlaceAudio}
+              onChange={(e) => {
+                setEnlaceAudio(e.target.value);
+                if (e.target.value) setArchivoAudio(null);
+              }}
+              placeholder="https://ejemplo.com/cancion.mp3 o enlace de audio"
+            />
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <Input
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
-            placeholder="Nombre de la canción (opcional si es enlace de YouTube)"
+            placeholder="Título de la canción"
           />
           <Input
             value={artista}
             onChange={(e) => setArtista(e.target.value)}
             placeholder="Artista (opcional)"
           />
-          <Input
-            value={url}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (e.target.value) setArchivoAudio(null);
-            }}
-            placeholder="Enlace de YouTube o Spotify"
-          />
         </div>
 
-        {/* Notificación inteligente al detectar enlace de YouTube */}
-        {isYoutube && (
-          <div className="flex items-center gap-2 rounded-2xl bg-primary/10 border border-primary/30 p-3 text-xs text-primary animate-in fade-in zoom-in-95 duration-200">
-            <Sparkles className="h-4 w-4 shrink-0" />
-            <span>
-              <strong>Enlace de YouTube detectado:</strong> Blowmind descargará y guardará el video/audio en tu base de datos Supabase para reproducirlo sin depender de YouTube.
-            </span>
-          </div>
-        )}
-
-        {/* Selector alternativo de archivo local */}
-        <div className="flex items-center justify-between pt-1">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="audio/*,video/mp4"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                setArchivoAudio(file);
-                setUrl("");
-                if (!nombre) setNombre(file.name.replace(/\.[^/.]+$/, ""));
-              }
-            }}
-          />
+        <div className="flex items-center justify-between pt-1 text-xs">
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+            onClick={() => setMostrarEnlaceManual(!mostrarEnlaceManual)}
+            className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
           >
-            <Upload className="h-3.5 w-3.5" />
-            <span>
-              {archivoAudio ? `Archivo: ${archivoAudio.name}` : "O sube un archivo (MP3/MP4)"}
-            </span>
+            {mostrarEnlaceManual ? "← Volver a subida de archivo" : "O ingresar enlace de audio / web"}
           </button>
-
-          {archivoAudio && (
-            <button
-              onClick={() => {
-                setArchivoAudio(null);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-              }}
-              className="text-xs text-destructive hover:underline cursor-pointer"
-            >
-              Quitar
-            </button>
-          )}
         </div>
 
         {/* Estado de progreso */}
@@ -726,18 +564,89 @@ function BandaSonora() {
         )}
 
         <Button
-          className="w-full rounded-full h-11 text-sm font-semibold shadow-md"
-          disabled={add.isPending}
+          className="w-full rounded-full h-11 text-sm font-semibold shadow-md cursor-pointer"
+          disabled={add.isPending || (!archivoAudio && !enlaceAudio.trim())}
           onClick={() => add.mutate()}
         >
           {add.isPending ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Procesando y guardando…
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando en Supabase…
             </>
           ) : (
-            `Guardar en ${CATEGORIAS.find((c) => c.id === categoria)?.label} (Supabase)`
+            `Guardar canción en ${CATEGORIAS.find((c) => c.id === categoria)?.label}`
           )}
         </Button>
+      </div>
+
+      {/* Sugerencias de pistas curadas listas para usar */}
+      <div className="surface-panel p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold">Plantillas sonoras de alta fidelidad</h3>
+          </div>
+          <span className="text-[0.65rem] text-muted-foreground">Listas para anclaje</span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pistas relajantes y de activación creadas especialmente para reproducirse sin cortes en segundo plano.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          {PLANTILLAS_SONORAS.map((item) => {
+            const yaAgregada = canciones.some((c) => c.nombre_cancion === item.nombre);
+            const isPlayingThis = player.track?.url === item.url && player.isPlaying;
+
+            return (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-3 p-3 rounded-2xl border border-border bg-secondary/30 hover:border-primary/40 transition-colors"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    void player.playTrack({
+                      id: item.id,
+                      nombre: item.nombre,
+                      artista: item.artista,
+                      url: item.url,
+                      categoria: item.categoria,
+                    });
+                  }}
+                  className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all cursor-pointer",
+                    isPlayingThis
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "bg-secondary text-foreground hover:bg-primary/20 hover:text-primary",
+                  )}
+                  title="Escuchar muestra"
+                >
+                  {isPlayingThis ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+                </button>
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold truncate text-foreground">{item.nombre}</p>
+                  <p className="text-[0.65rem] text-muted-foreground capitalize">{item.categoria}</p>
+                </div>
+
+                {!yaAgregada ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-full text-[0.7rem] h-7 px-2.5 cursor-pointer hover:border-primary hover:text-primary"
+                    disabled={agregarPlantilla.isPending}
+                    onClick={() => agregarPlantilla.mutate(item)}
+                  >
+                    + Añadir
+                  </Button>
+                ) : (
+                  <span className="text-[0.65rem] text-primary font-medium px-2 py-0.5 rounded-full bg-primary/10">
+                    Añadida
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Lista de canciones por categoría */}
@@ -753,9 +662,8 @@ function BandaSonora() {
 
             <div className="space-y-2">
               {lista.map((s) => {
-                const isThisPlaying = trackActivo?.id === s.id && isPlaying;
-                const isThisActive = trackActivo?.id === s.id;
-                const isSupabaseHosted = s.url_enlace.includes("supabase.co") || s.url_enlace.includes("/storage/v1/");
+                const isThisPlaying = player.track?.id === s.id && player.isPlaying;
+                const isThisActive = player.track?.id === s.id;
 
                 return (
                   <div
@@ -767,7 +675,7 @@ function BandaSonora() {
                   >
                     {/* Botón de reproducción directa en la app */}
                     <button
-                      onClick={() => playTrack(s)}
+                      onClick={() => handlePlayTrack(s)}
                       className={cn(
                         "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all active:scale-95 cursor-pointer",
                         isThisPlaying
@@ -788,16 +696,10 @@ function BandaSonora() {
                         <p className={cn("truncate text-sm font-medium", isThisActive ? "text-primary font-semibold" : "")}>
                           {s.nombre_cancion}
                         </p>
-                        {isSupabaseHosted ? (
-                          <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary shrink-0 font-medium">
-                            <Cloud className="h-2.5 w-2.5" />
-                            Supabase
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground shrink-0">
-                            Enlace
-                          </span>
-                        )}
+                        <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary shrink-0 font-medium">
+                          <Cloud className="h-2.5 w-2.5" />
+                          Audio Supabase
+                        </span>
                       </div>
                       {s.artista ? (
                         <p className="truncate text-xs text-muted-foreground mt-0.5">
@@ -805,20 +707,6 @@ function BandaSonora() {
                         </p>
                       ) : null}
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void resolvePlayableUrl(s.url_enlace).then((u) => {
-                          window.open(u, "_blank", "noopener,noreferrer");
-                        });
-                      }}
-                      className="text-muted-foreground/60 transition-colors hover:text-foreground p-1 cursor-pointer"
-                      title="Abrir enlace original"
-                      aria-label={`Abrir ${s.nombre_cancion}`}
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </button>
 
                     <button
                       onClick={() => del.mutate({ id: s.id, url_enlace: s.url_enlace })}
@@ -838,26 +726,26 @@ function BandaSonora() {
       })}
 
       {/* Barra de Reproducción Flotante Integrada en Blowmind */}
-      {trackActivo && (
+      {player.track && (
         <div className="fixed bottom-20 left-4 right-4 z-40 max-w-2xl mx-auto rounded-3xl border border-primary/40 bg-surface/95 backdrop-blur-2xl shadow-2xl p-4 animate-in slide-in-from-bottom-5 duration-300">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/20 text-primary">
-                <Music4 className={cn("h-5 w-5", isPlaying ? "animate-bounce" : "")} />
+                <Music4 className={cn("h-5 w-5", player.isPlaying ? "animate-bounce" : "")} />
               </div>
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-foreground">
-                  {trackActivo.nombre}
+                  {player.track.nombre}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {trackActivo.artista ?? "Banda sonora vital"} · <span className="capitalize">{trackActivo.categoria}</span>
+                  {player.track.artista ?? "Banda sonora vital"} · <span className="capitalize">{player.track.categoria}</span>
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-1">
               <button
-                onClick={detenerReproduccion}
+                onClick={() => player.stopTrack()}
                 className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground cursor-pointer hover:bg-secondary"
               >
                 <X className="h-4 w-4" />
@@ -869,18 +757,18 @@ function BandaSonora() {
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-[0.65rem] tabular-nums text-muted-foreground w-8">
-                {formatTime(currentTime)}
+                {formatTime(player.currentTime)}
               </span>
               <input
                 type="range"
                 min={0}
-                max={duration || 100}
-                value={currentTime}
-                onChange={(e) => seek(Number(e.target.value))}
+                max={player.duration || 100}
+                value={player.currentTime}
+                onChange={(e) => player.seekTrack(Number(e.target.value))}
                 className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
               />
               <span className="text-[0.65rem] tabular-nums text-muted-foreground w-8 text-right">
-                {formatTime(duration)}
+                {formatTime(player.duration)}
               </span>
             </div>
 
@@ -888,10 +776,10 @@ function BandaSonora() {
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
                 <button
-                  onClick={toggleMute}
+                  onClick={() => player.toggleTrackMute()}
                   className="text-muted-foreground hover:text-foreground cursor-pointer p-1"
                 >
-                  {isMuted || volume === 0 ? (
+                  {player.isMuted || player.volume === 0 ? (
                     <VolumeX className="h-4 w-4" />
                   ) : (
                     <Volume2 className="h-4 w-4" />
@@ -902,8 +790,8 @@ function BandaSonora() {
                   min={0}
                   max={1}
                   step={0.05}
-                  value={isMuted ? 0 : volume}
-                  onChange={(e) => changeVolume(Number(e.target.value))}
+                  value={player.isMuted ? 0 : player.volume}
+                  onChange={(e) => player.setTrackVolume(Number(e.target.value))}
                   className="w-16 h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
                 />
               </div>
@@ -918,26 +806,15 @@ function BandaSonora() {
                 </button>
                 <button
                   onClick={() => {
-                    const ytId = trackActivo?.url ? extractYouTubeVideoId(trackActivo.url) : null;
-                    if (isPlaying) {
-                      if (ytId && ytPlayerRef.current?.pauseVideo) {
-                        ytPlayerRef.current.pauseVideo();
-                      } else if (audioRef.current) {
-                        audioRef.current.pause();
-                      }
-                      setIsPlaying(false);
+                    if (player.isPlaying) {
+                      player.pauseTrack();
                     } else {
-                      if (ytId && ytPlayerRef.current?.playVideo) {
-                        ytPlayerRef.current.playVideo();
-                      } else if (audioRef.current) {
-                        audioRef.current.play().catch(() => toast.error("Error al reproducir"));
-                      }
-                      setIsPlaying(true);
+                      void player.resumeTrack();
                     }
                   }}
                   className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg active:scale-95 cursor-pointer"
                 >
-                  {isPlaying ? (
+                  {player.isPlaying ? (
                     <Pause className="h-5 w-5" />
                   ) : (
                     <Play className="h-5 w-5 ml-0.5" />
