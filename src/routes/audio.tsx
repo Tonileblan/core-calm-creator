@@ -18,6 +18,10 @@ import {
   VolumeX,
   X,
   Sparkles,
+  Youtube,
+  Link2,
+  FileAudio,
+  CheckCircle2,
 } from "lucide-react";
 
 import { AppHeader } from "@/components/AppHeader";
@@ -36,6 +40,12 @@ import {
   uploadAudioToSupabase,
   eliminarCancionDeSupabase,
 } from "@/lib/supabase-soundtrack";
+import {
+  getYouTubeMetadata,
+  isYouTubeUrl,
+  extractYouTubeVideoId,
+  type YouTubeMetadata,
+} from "@/lib/youtube-audio";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/audio")({
@@ -280,11 +290,13 @@ function BandaSonora() {
   const procesar = useServerFn(procesarCancionServerFn);
 
   const [categoria, setCategoria] = useState<string>("celebrar");
+  const [inputMode, setInputMode] = useState<"youtube" | "archivo">("youtube");
   const [nombre, setNombre] = useState("");
   const [artista, setArtista] = useState("");
   const [enlaceAudio, setEnlaceAudio] = useState("");
-  const [mostrarEnlaceManual, setMostrarEnlaceManual] = useState(false);
   const [archivoAudio, setArchivoAudio] = useState<File | null>(null);
+  const [ytPreview, setYtPreview] = useState<YouTubeMetadata | null>(null);
+  const [cargandoMetadata, setCargandoMetadata] = useState(false);
   const [progresoEstado, setProgresoEstado] = useState<string | null>(null);
 
   // Reproductor global persistente (no se detiene en segundo plano ni al cambiar de pestaña)
@@ -293,6 +305,35 @@ function BandaSonora() {
 
   // Mantener pantalla activa mientras se reproduce música
   useWakeLock(player.isPlaying);
+
+  // Auto-detección y carga de metadatos de YouTube cuando se pega un enlace
+  useEffect(() => {
+    const trimmed = enlaceAudio.trim();
+    if (!trimmed || !isYouTubeUrl(trimmed)) {
+      setYtPreview(null);
+      return;
+    }
+
+    let isMounted = true;
+    setCargandoMetadata(true);
+
+    getYouTubeMetadata(trimmed)
+      .then((meta) => {
+        if (!isMounted) return;
+        if (meta) {
+          setYtPreview(meta);
+          if (!nombre) setNombre(meta.title);
+          if (!artista && meta.author) setArtista(meta.author);
+        }
+      })
+      .finally(() => {
+        if (isMounted) setCargandoMetadata(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [enlaceAudio]);
 
   const { data: canciones = [] } = useQuery({
     queryKey: ["soundtrack", user?.id],
@@ -310,12 +351,15 @@ function BandaSonora() {
   const add = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Inicia sesión para guardar tus canciones.");
-      if (!archivoAudio && !enlaceAudio.trim()) {
-        throw new Error("Selecciona un archivo de audio (MP3/M4A/WAV) o ingresa un enlace.");
+      if (inputMode === "archivo" && !archivoAudio) {
+        throw new Error("Selecciona un archivo de audio de tu dispositivo.");
+      }
+      if (inputMode === "youtube" && !enlaceAudio.trim()) {
+        throw new Error("Pega un enlace de YouTube o URL de audio.");
       }
 
       if (archivoAudio) {
-        setProgresoEstado("Subiendo archivo de audio a tu almacenamiento en Supabase...");
+        setProgresoEstado("Subiendo archivo de audio a Supabase Storage...");
         const publicUrl = await uploadAudioToSupabase(user.id, archivoAudio, archivoAudio.name);
         const songTitle = nombre.trim() || archivoAudio.name.replace(/\.[^/.]+$/, "");
         const { error } = await supabase.from("vital_soundtrack").insert({
@@ -327,7 +371,12 @@ function BandaSonora() {
         });
         if (error) throw error;
       } else {
-        setProgresoEstado("Procesando y almacenando audio independiente en Supabase...");
+        const isYt = isYouTubeUrl(enlaceAudio);
+        setProgresoEstado(
+          isYt
+            ? "Extrayendo audio de YouTube y guardándolo en Supabase Storage..."
+            : "Procesando audio y almacenando en Supabase...",
+        );
         await procesar({
           data: {
             nombre: nombre.trim() || undefined,
@@ -343,19 +392,19 @@ function BandaSonora() {
       setArtista("");
       setEnlaceAudio("");
       setArchivoAudio(null);
-      setMostrarEnlaceManual(false);
+      setYtPreview(null);
       setProgresoEstado(null);
       void queryClient.invalidateQueries({ queryKey: ["soundtrack"] });
-      toast.success("Canción guardada en tu Banda Sonora (independiente)");
+      toast.success("Canción procesada y guardada en Supabase Storage");
     },
     onError: (e: Error) => {
       setProgresoEstado(null);
-      toast.error(e.message);
+      toast.error(e.message || "Error al procesar el audio.");
     },
   });
 
   const agregarPlantilla = useMutation({
-    mutationFn: async (plantilla: typeof PLANTILLAS_SONORAS[0]) => {
+    mutationFn: async (plantilla: (typeof PLANTILLAS_SONORAS)[0]) => {
       if (!user) throw new Error("Inicia sesión para guardar canciones.");
       setProgresoEstado(`Añadiendo ${plantilla.nombre}...`);
       const { error } = await supabase.from("vital_soundtrack").insert({
@@ -392,7 +441,13 @@ function BandaSonora() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const handlePlayTrack = (s: { id: string; nombre_cancion: string; artista: string | null; categoria_momento: string; url_enlace: string }) => {
+  const handlePlayTrack = (s: {
+    id: string;
+    nombre_cancion: string;
+    artista: string | null;
+    categoria_momento: string;
+    url_enlace: string;
+  }) => {
     void player.playTrack({
       id: s.id,
       nombre: s.nombre_cancion,
@@ -420,31 +475,33 @@ function BandaSonora() {
         <Link to="/auth" className="text-primary underline">
           Inicia sesión
         </Link>{" "}
-        para crear tu diario musical de estados de ánimo y alojar tus canciones en Supabase de forma 100% independiente.
+        para crear tu diario musical de estados de ánimo y alojar tus canciones en Supabase de forma
+        100% independiente.
       </p>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Formulario de subida de audio */}
+      {/* Formulario de adición y procesamiento de audio */}
       <div className="surface-panel space-y-4 p-5">
         <div className="flex items-center justify-between">
           <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Momento vital
           </Label>
           <span className="text-[0.65rem] text-primary font-medium flex items-center gap-1">
-            <Cloud className="h-3 w-3" /> Audio nativo sin dependencias
+            <Cloud className="h-3 w-3" /> Audio nativo almacenado en Supabase
           </span>
         </div>
 
+        {/* Selector de categoría */}
         <div className="flex flex-wrap gap-2">
           {CATEGORIAS.map((c) => (
             <button
               key={c.id}
               onClick={() => setCategoria(c.id)}
               className={
-                "rounded-full border px-3 py-1.5 text-xs transition-colors cursor-pointer " +
+                "rounded-full border px-3.5 py-1.5 text-xs transition-all cursor-pointer " +
                 (categoria === c.id
                   ? "border-primary bg-primary/15 text-primary font-semibold shadow-sm"
                   : "border-border text-muted-foreground hover:border-primary/40")
@@ -455,125 +512,217 @@ function BandaSonora() {
           ))}
         </div>
 
-        {/* Zona de subida de archivo de audio principal */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              setArchivoAudio(file);
-              setEnlaceAudio("");
-              if (!nombre) setNombre(file.name.replace(/\.[^/.]+$/, ""));
-            }
-          }}
-        />
-
-        {!archivoAudio && !mostrarEnlaceManual && (
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border hover:border-primary/60 bg-secondary/30 hover:bg-primary/5 p-6 text-center cursor-pointer transition-all duration-200"
+        {/* Pestañas de modo de entrada: YouTube / Enlace vs Archivo local */}
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              setInputMode("youtube");
+              setArchivoAudio(null);
+            }}
+            className={cn(
+              "flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-semibold transition-all cursor-pointer",
+              inputMode === "youtube"
+                ? "border-primary bg-primary/15 text-primary shadow-sm"
+                : "border-border text-muted-foreground hover:bg-secondary/40",
+            )}
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary group-hover:scale-110 transition-transform mb-3">
-              <Upload className="h-6 w-6" />
-            </div>
-            <p className="text-sm font-semibold text-foreground">
-              Sube tu canción (MP3, M4A, WAV, AAC, FLAC)
-            </p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-              Se almacena directamente en tu nube de Supabase para sonar siempre en segundo plano y con la pantalla bloqueada.
-            </p>
-          </div>
-        )}
+            <Youtube className="h-4 w-4 text-red-500" />
+            <span>Enlace YouTube / Web</span>
+          </button>
 
-        {archivoAudio && (
-          <div className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/20 text-primary">
-                  <Music4 className="h-4 w-4" />
+          <button
+            type="button"
+            onClick={() => {
+              setInputMode("archivo");
+              setEnlaceAudio("");
+              setYtPreview(null);
+            }}
+            className={cn(
+              "flex items-center justify-center gap-2 rounded-xl border p-2.5 text-xs font-semibold transition-all cursor-pointer",
+              inputMode === "archivo"
+                ? "border-primary bg-primary/15 text-primary shadow-sm"
+                : "border-border text-muted-foreground hover:bg-secondary/40",
+            )}
+          >
+            <FileAudio className="h-4 w-4 text-primary" />
+            <span>Subir Archivo Local</span>
+          </button>
+        </div>
+
+        {/* Modo YouTube / Enlace */}
+        {inputMode === "youtube" && (
+          <div className="space-y-3 animate-in fade-in duration-200">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground flex items-center justify-between">
+                <span>Pega el enlace de YouTube o audio:</span>
+                {cargandoMetadata && (
+                  <span className="text-[0.65rem] text-primary flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Analizando video...
+                  </span>
+                )}
+              </Label>
+              <div className="relative">
+                <Input
+                  value={enlaceAudio}
+                  onChange={(e) => setEnlaceAudio(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=... o https://youtu.be/..."
+                  className="pr-10"
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
+                  <Youtube className="h-4 w-4 text-red-500" />
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-foreground">
-                    {archivoAudio.name}
-                  </p>
-                  <p className="text-[0.65rem] text-muted-foreground">
-                    {(archivoAudio.size / (1024 * 1024)).toFixed(2)} MB · Archivo de audio listo
+              </div>
+              <p className="text-[0.7rem] text-muted-foreground">
+                ✨ Extracción automática: el audio se descarga y se almacena en tu nube de Supabase
+                para sonar en segundo plano sin depender de YouTube.
+              </p>
+            </div>
+
+            {/* Vista previa de YouTube detectado */}
+            {ytPreview && (
+              <div className="flex items-center gap-3 rounded-2xl border border-primary/40 bg-primary/5 p-3 animate-in fade-in zoom-in-95 duration-150">
+                {ytPreview.thumbnailUrl ? (
+                  <img
+                    src={ytPreview.thumbnailUrl}
+                    alt={ytPreview.title}
+                    className="h-12 w-16 object-cover rounded-xl shrink-0 border border-primary/20 shadow-sm"
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-red-500/20 text-red-500">
+                    <Youtube className="h-6 w-6" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <p className="text-xs font-semibold text-foreground truncate">
+                      {ytPreview.title}
+                    </p>
+                  </div>
+                  <p className="text-[0.68rem] text-muted-foreground truncate mt-0.5">
+                    Canal / Artista: <span className="text-foreground">{ytPreview.author}</span>
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setArchivoAudio(null);
-                  if (fileInputRef.current) fileInputRef.current.value = "";
-                }}
-                className="text-xs text-destructive hover:underline cursor-pointer px-2 py-1"
-              >
-                Cambiar
-              </button>
-            </div>
+            )}
           </div>
         )}
 
-        {mostrarEnlaceManual && (
-          <div className="space-y-2 animate-in fade-in duration-150">
-            <Label className="text-xs text-muted-foreground">Enlace de audio o descarga</Label>
-            <Input
-              value={enlaceAudio}
+        {/* Modo Archivo Local */}
+        {inputMode === "archivo" && (
+          <div className="space-y-3 animate-in fade-in duration-200">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.m4a,.wav,.aac,.flac,.ogg"
+              className="hidden"
               onChange={(e) => {
-                setEnlaceAudio(e.target.value);
-                if (e.target.value) setArchivoAudio(null);
+                const file = e.target.files?.[0];
+                if (file) {
+                  setArchivoAudio(file);
+                  if (!nombre) setNombre(file.name.replace(/\.[^/.]+$/, ""));
+                }
               }}
-              placeholder="https://ejemplo.com/cancion.mp3 o enlace de audio"
+            />
+
+            {!archivoAudio ? (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="group flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border hover:border-primary/60 bg-secondary/30 hover:bg-primary/5 p-6 text-center cursor-pointer transition-all duration-200"
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary group-hover:scale-110 transition-transform mb-3">
+                  <Upload className="h-6 w-6" />
+                </div>
+                <p className="text-sm font-semibold text-foreground">
+                  Sube tu archivo de audio (MP3, M4A, WAV, AAC, FLAC)
+                </p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                  Haz clic para seleccionar el archivo de música desde tu dispositivo.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-primary/40 bg-primary/5 p-4 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/20 text-primary">
+                      <Music4 className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-foreground">
+                        {archivoAudio.name}
+                      </p>
+                      <p className="text-[0.65rem] text-muted-foreground">
+                        {(archivoAudio.size / (1024 * 1024)).toFixed(2)} MB · Archivo listo para
+                        subir
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setArchivoAudio(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    className="text-xs text-destructive hover:underline cursor-pointer px-2 py-1"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Campos de Título y Artista */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+          <div>
+            <Label className="text-[0.7rem] text-muted-foreground mb-1 block">
+              Título de la canción
+            </Label>
+            <Input
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              placeholder="Ej. Viva La Vida"
             />
           </div>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <Input
-            value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
-            placeholder="Título de la canción"
-          />
-          <Input
-            value={artista}
-            onChange={(e) => setArtista(e.target.value)}
-            placeholder="Artista (opcional)"
-          />
-        </div>
-
-        <div className="flex items-center justify-between pt-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setMostrarEnlaceManual(!mostrarEnlaceManual)}
-            className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-          >
-            {mostrarEnlaceManual ? "← Volver a subida de archivo" : "O ingresar enlace de audio / web"}
-          </button>
+          <div>
+            <Label className="text-[0.7rem] text-muted-foreground mb-1 block">
+              Artista o autor (opcional)
+            </Label>
+            <Input
+              value={artista}
+              onChange={(e) => setArtista(e.target.value)}
+              placeholder="Ej. Coldplay"
+            />
+          </div>
         </div>
 
         {/* Estado de progreso */}
         {progresoEstado && (
-          <div className="flex items-center gap-2 rounded-2xl bg-secondary p-3 text-xs text-muted-foreground animate-pulse">
+          <div className="flex items-center gap-2.5 rounded-2xl bg-primary/10 border border-primary/30 p-3.5 text-xs text-foreground font-medium animate-pulse">
             <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
             <span>{progresoEstado}</span>
           </div>
         )}
 
+        {/* Botón principal de guardado */}
         <Button
           className="w-full rounded-full h-11 text-sm font-semibold shadow-md cursor-pointer"
-          disabled={add.isPending || (!archivoAudio && !enlaceAudio.trim())}
+          disabled={
+            add.isPending ||
+            (inputMode === "archivo" && !archivoAudio) ||
+            (inputMode === "youtube" && !enlaceAudio.trim())
+          }
           onClick={() => add.mutate()}
         >
           {add.isPending ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando en Supabase…
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Procesando y almacenando en
+              Supabase…
             </>
           ) : (
-            `Guardar canción en ${CATEGORIAS.find((c) => c.id === categoria)?.label}`
+            `Procesar y guardar en ${CATEGORIAS.find((c) => c.id === categoria)?.label}`
           )}
         </Button>
       </div>
@@ -588,7 +737,8 @@ function BandaSonora() {
           <span className="text-[0.65rem] text-muted-foreground">Listas para anclaje</span>
         </div>
         <p className="text-xs text-muted-foreground">
-          Pistas relajantes y de activación creadas especialmente para reproducirse sin cortes en segundo plano.
+          Pistas relajantes y de activación creadas especialmente para reproducirse sin cortes en
+          segundo plano.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
@@ -620,7 +770,11 @@ function BandaSonora() {
                   )}
                   title="Escuchar muestra"
                 >
-                  {isPlayingThis ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+                  {isPlayingThis ? (
+                    <Pause className="h-3.5 w-3.5" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5 ml-0.5" />
+                  )}
                 </button>
 
                 <div className="min-w-0 flex-1">
@@ -670,7 +824,9 @@ function BandaSonora() {
                     key={s.id}
                     className={cn(
                       "surface-panel flex items-center gap-3 px-4 py-3 transition-all duration-200",
-                      isThisActive ? "border-primary/60 bg-primary/5 shadow-sm" : "hover:border-border",
+                      isThisActive
+                        ? "border-primary/60 bg-primary/5 shadow-sm"
+                        : "hover:border-border",
                     )}
                   >
                     {/* Botón de reproducción directa en la app */}
@@ -693,7 +849,12 @@ function BandaSonora() {
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <p className={cn("truncate text-sm font-medium", isThisActive ? "text-primary font-semibold" : "")}>
+                        <p
+                          className={cn(
+                            "truncate text-sm font-medium",
+                            isThisActive ? "text-primary font-semibold" : "",
+                          )}
+                        >
                           {s.nombre_cancion}
                         </p>
                         <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary shrink-0 font-medium">
@@ -702,9 +863,7 @@ function BandaSonora() {
                         </span>
                       </div>
                       {s.artista ? (
-                        <p className="truncate text-xs text-muted-foreground mt-0.5">
-                          {s.artista}
-                        </p>
+                        <p className="truncate text-xs text-muted-foreground mt-0.5">{s.artista}</p>
                       ) : null}
                     </div>
 
@@ -738,7 +897,8 @@ function BandaSonora() {
                   {player.track.nombre}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {player.track.artista ?? "Banda sonora vital"} · <span className="capitalize">{player.track.categoria}</span>
+                  {player.track.artista ?? "Banda sonora vital"} ·{" "}
+                  <span className="capitalize">{player.track.categoria}</span>
                 </p>
               </div>
             </div>

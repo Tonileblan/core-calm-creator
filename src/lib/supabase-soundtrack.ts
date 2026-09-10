@@ -1,5 +1,10 @@
 import { supabase } from "@/integrations/supabase/client";
-import { downloadYouTubeMedia, getYouTubeMetadata, isYouTubeUrl } from "./youtube-audio";
+import {
+  downloadYouTubeMedia,
+  getYouTubeMetadata,
+  isYouTubeUrl,
+  extractYouTubeVideoId,
+} from "./youtube-audio";
 
 export const BUCKET_NAME = "soundtrack";
 
@@ -83,7 +88,7 @@ export async function procesarYGuardarCancion({
 
     if (isYouTubeUrl(inputUrl)) {
       onProgress?.("Detectado enlace de YouTube. Obteniendo datos...");
-      
+
       // Auto-completar título y artista si están vacíos
       if (!finalNombre || !finalArtista) {
         const meta = await getYouTubeMetadata(inputUrl);
@@ -166,7 +171,7 @@ export function resolvePlayableUrlSync(url: string): string {
   if (!url) return "";
   const trimmed = url.trim();
 
-  // Si es un enlace de YouTube que pudiera haber quedado en la DB
+  // Si es un enlace de YouTube que pudiera haber quedado en la DB de versiones antiguas
   const ytId = extractYouTubeVideoId(trimmed);
   if (ytId) {
     return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
