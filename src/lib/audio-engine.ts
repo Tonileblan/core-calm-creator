@@ -94,7 +94,7 @@ type Nodes = {
 
 /**
  * Genera dinámicamente un buffer WAV de audio silencioso PCM (8kHz mono)
- * para anclar la sesión de audio nativa de iOS y Android en segundo plano.
+ * para anclar la sesión de audio nativa de iOS y Android en segundo plano para frecuencias Web Audio.
  */
 function createSilentWavBlobUrl(seconds = 4): string {
   if (typeof window === "undefined") return "";
@@ -167,7 +167,7 @@ export class AudioEngine {
     isPlaying: false,
     currentTime: 0,
     duration: 0,
-    volume: 0.8,
+    volume: 0.85,
     isMuted: false,
   };
   private _volume = 0.5;
@@ -399,7 +399,7 @@ export class AudioEngine {
     window.setTimeout(stop, fade * 1000 + 120);
   }
 
-  /** Arranca un preset. Devuelve true si quedó reproduciéndose. */
+  /** Arranca un preset de frecuencias binaurales o ruido. */
   play(id: SoundId, fadeIn = 1.2): boolean {
     if (this._playing === id) {
       this.stop();
@@ -535,7 +535,7 @@ export class AudioEngine {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
-      // Mezcla de seno y triángulo para un tono de campana / arpa suave y cálido
+      // Mezcla de seno y triángulo para un tono suave y cálido
       osc.type = soundId === "energica" ? "triangle" : "sine";
       osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
 
@@ -568,6 +568,43 @@ export class AudioEngine {
   }
 
   /**
+   * Configura la información de la canción en la pantalla de bloqueo (MediaSession)
+   */
+  private setupTrackMediaSession(track: TrackInfo) {
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: track.nombre,
+          artist: track.artista || "Banda Sonora Vital",
+          album: "Blowmind · " + (track.categoria ? track.categoria.toUpperCase() : "Banda Sonora"),
+          artwork: [
+            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        });
+        navigator.mediaSession.playbackState = "playing";
+
+        navigator.mediaSession.setActionHandler("play", () => {
+          void this.resumeTrack();
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+          this.pauseTrack();
+        });
+        navigator.mediaSession.setActionHandler("stop", () => {
+          this.stopTrack();
+        });
+        navigator.mediaSession.setActionHandler("seekto", (details) => {
+          if (details.seekTime !== undefined && details.seekTime !== null) {
+            this.seekTrack(details.seekTime);
+          }
+        });
+      } catch (e) {
+        console.warn("MediaSession API error:", e);
+      }
+    }
+  }
+
+  /**
    * Asegura que el elemento <audio> para canciones de Banda Sonora esté presente en el DOM
    * configurado con playsinline para reproducción ininterrumpida en segundo plano.
    */
@@ -579,8 +616,7 @@ export class AudioEngine {
       audio.setAttribute("webkit-playsinline", "true");
       audio.setAttribute("preload", "auto");
       (audio as any).playsInline = true;
-      // No configurar crossOrigin="anonymous" para evitar que bloquee servidores sin headers CORS
-      audio.volume = this.trackState.volume;
+      audio.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
       audio.style.position = "fixed";
       audio.style.opacity = "0";
       audio.style.pointerEvents = "none";
@@ -597,20 +633,43 @@ export class AudioEngine {
       });
       audio.addEventListener("play", () => {
         this.trackState.isPlaying = true;
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "playing";
+        }
         this.emitTrackState();
       });
       audio.addEventListener("pause", () => {
         this.trackState.isPlaying = false;
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "paused";
+        }
         this.emitTrackState();
       });
       audio.addEventListener("ended", () => {
         this.trackState.isPlaying = false;
+        if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+          navigator.mediaSession.playbackState = "none";
+        }
         this.emitTrackState();
       });
       audio.addEventListener("error", (e) => {
-        console.warn("Audio element error:", audio.error, e);
-        this.trackState.isPlaying = false;
-        this.emitTrackState();
+        console.warn("Audio element error on src:", audio.src, audio.error, e);
+        // Si hay error en la fuente directa, intentar resolver URL firmada automáticamente
+        if (this.activeTrack && !audio.src.includes("token=")) {
+          void resolvePlayableUrl(this.activeTrack.url).then((signedUrl) => {
+            if (signedUrl && signedUrl !== audio.src) {
+              audio.src = signedUrl;
+              void audio.play().catch((err) => {
+                console.warn("Error reintentando audio firmado:", err);
+                this.trackState.isPlaying = false;
+                this.emitTrackState();
+              });
+            }
+          });
+        } else {
+          this.trackState.isPlaying = false;
+          this.emitTrackState();
+        }
       });
 
       document.body.appendChild(audio);
@@ -654,10 +713,15 @@ export class AudioEngine {
       return;
     }
 
-    // Detener frecuencias si estaban activas
+    // Detener frecuencias / alarmas si estaban activas
     if (this._playing) {
       this.stop(0.2);
     }
+    this.stopAlarm();
+
+    // Pausar los elementos portadores silenciosos para que no compitan con el elemento de música principal
+    if (this.silentCarrierEl) this.silentCarrierEl.pause();
+    if (this.streamAudioEl) this.streamAudioEl.pause();
 
     this.ensureTrackAudioElement();
     if (!this.trackAudioEl) return;
@@ -669,22 +733,16 @@ export class AudioEngine {
     this.trackState.isPlaying = true;
     this.emitTrackState();
 
-    // 1. Resolver URL inmediata síncrona para no perder el contexto de interacción del usuario
+    // Configurar MediaSession directamente para la canción
+    this.setupTrackMediaSession(track);
+
+    // 1. Obtener URL reproducible (síncrona para inicio instantáneo)
     const initialUrl = resolvePlayableUrlSync(track.url);
     this.trackAudioEl.src = initialUrl;
-    this.trackAudioEl.volume = this.trackState.isMuted ? 0 : this.trackState.volume;
+    this.trackAudioEl.volume = this.trackState.isMuted ? 0 : Math.max(0.1, this.trackState.volume);
     this.trackAudioEl.currentTime = 0;
 
-    // Configurar metadatos en pantalla de bloqueo y activar portador continuo
-    this.startBackgroundSession(
-      track.nombre,
-      track.artista || "Blowmind · Banda Sonora Vital",
-      () => { void this.resumeTrack(); },
-      () => { this.pauseTrack(); },
-      () => { this.stopTrack(); }
-    );
-
-    // 2. Iniciar reproducción inmediatamente
+    // 2. Iniciar reproducción
     try {
       const playPromise = this.trackAudioEl.play();
       if (playPromise !== undefined) {
@@ -693,25 +751,23 @@ export class AudioEngine {
       this.trackState.isPlaying = true;
       this.emitTrackState();
     } catch (err: any) {
-      console.warn("Intento de reproducción directa:", err);
+      console.warn("Fallo reproducción inicial, resolviendo URL autorizada de Supabase...", err);
 
-      // Si falló (por ejemplo, requiere URL firmada de Supabase Storage), resolver URL firmada y reintentar
       try {
         const signedUrl = await resolvePlayableUrl(track.url);
-        if (signedUrl && signedUrl !== initialUrl) {
+        if (signedUrl && signedUrl !== this.trackAudioEl.src) {
           this.trackAudioEl.src = signedUrl;
           await this.trackAudioEl.play();
           this.trackState.isPlaying = true;
           this.emitTrackState();
-        } else {
-          this.trackState.isPlaying = false;
-          this.emitTrackState();
+          return;
         }
       } catch (retryErr) {
-        console.warn("Fallo definitivo al reproducir audio:", retryErr);
-        this.trackState.isPlaying = false;
-        this.emitTrackState();
+        console.error("Error definitivo al reproducir pista:", retryErr);
       }
+
+      this.trackState.isPlaying = false;
+      this.emitTrackState();
     }
   }
 
@@ -734,13 +790,7 @@ export class AudioEngine {
     this.ensureTrackAudioElement();
     if (!this.trackAudioEl) return;
     if (this.activeTrack) {
-      this.startBackgroundSession(
-        this.activeTrack.nombre,
-        this.activeTrack.artista || "Blowmind · Banda Sonora Vital",
-        () => { void this.resumeTrack(); },
-        () => { this.pauseTrack(); },
-        () => { this.stopTrack(); }
-      );
+      this.setupTrackMediaSession(this.activeTrack);
     }
     try {
       await this.trackAudioEl.play();
@@ -748,6 +798,20 @@ export class AudioEngine {
       this.emitTrackState();
     } catch (err) {
       console.warn("Error al reanudar pista:", err);
+      // Reintentar con URL firmada
+      if (this.activeTrack) {
+        try {
+          const signedUrl = await resolvePlayableUrl(this.activeTrack.url);
+          if (signedUrl && signedUrl !== this.trackAudioEl.src) {
+            this.trackAudioEl.src = signedUrl;
+            await this.trackAudioEl.play();
+            this.trackState.isPlaying = true;
+            this.emitTrackState();
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 
@@ -798,7 +862,6 @@ export class AudioEngine {
       const ctx = this.ensure();
       if (ctx.state === "suspended") {
         void ctx.resume().then(() => {
-          // Reproducir un micro-silencio para desbloquear hardware
           const buf = ctx.createBuffer(1, 1, 22050);
           const src = ctx.createBufferSource();
           src.buffer = buf;

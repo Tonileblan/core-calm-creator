@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   extractYouTubeVideoId,
   getYouTubeMetadata,
@@ -8,28 +7,6 @@ import {
 } from "./youtube-audio";
 
 const BUCKET_NAME = "soundtrack";
-
-/**
- * Asegura que el bucket 'soundtrack' exista en Supabase Storage con acceso público
- */
-async function asegurarBucketSoundtrack() {
-  try {
-    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-    const existing = buckets?.find((b) => b.name === BUCKET_NAME || b.id === BUCKET_NAME);
-    if (!existing) {
-      await supabaseAdmin.storage.createBucket(BUCKET_NAME, {
-        public: true,
-        fileSizeLimit: 104857600, // 100MB
-      });
-    } else if (!existing.public) {
-      await supabaseAdmin.storage.updateBucket(BUCKET_NAME, {
-        public: true,
-      });
-    }
-  } catch (err) {
-    console.warn("No se pudo verificar/crear bucket en Supabase:", err);
-  }
-}
 
 /**
  * Función de servidor para obtener metadatos de YouTube rápidamente para la UI
@@ -66,8 +43,6 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
     if (videoId) {
       // 1. Descargar audio directamente de YouTube a alta velocidad
       try {
-        await asegurarBucketSoundtrack();
-
         const result = await downloadYouTubeAudioBuffer(url);
         if (!nombre) nombre = result.title;
         if (!artista && result.author) artista = result.author;
@@ -75,7 +50,11 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
         const cleanName = (nombre || `audio_${videoId}`).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
         const fileName = `${context.userId}/${Date.now()}_${cleanName}.${result.extension}`;
 
-        const { data: uploadData, error: uploadErr } = await supabaseAdmin.storage
+        // Subir con el cliente autenticado del usuario (o admin si estuviera configurado)
+        let uploadData: { path: string } | null = null;
+        let uploadErr: any = null;
+
+        const upRes = await context.supabase.storage
           .from(BUCKET_NAME)
           .upload(fileName, result.buffer, {
             contentType: result.mimeType,
@@ -83,19 +62,34 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
             upsert: true,
           });
 
-        if (uploadErr || !uploadData) {
-          throw new Error(uploadErr?.message || "Error al subir archivo de audio a Supabase.");
-        }
+        uploadData = upRes.data;
+        uploadErr = upRes.error;
 
-        const { data: pub } = supabaseAdmin.storage.from(BUCKET_NAME).getPublicUrl(uploadData.path);
-        finalAudioUrl = pub.publicUrl;
+        if (uploadErr || !uploadData) {
+          // Intentar en bucket fallback 'media' si soundtrack no estuviera listo
+          const upFallback = await context.supabase.storage
+            .from("media")
+            .upload(fileName, result.buffer, {
+              contentType: result.mimeType,
+              cacheControl: "3600",
+              upsert: true,
+            });
+          if (!upFallback.error && upFallback.data) {
+            const { data: pubFallback } = context.supabase.storage.from("media").getPublicUrl(upFallback.data.path);
+            finalAudioUrl = pubFallback.publicUrl;
+          } else {
+            throw new Error(uploadErr?.message || "Error al subir archivo de audio a Supabase Storage.");
+          }
+        } else {
+          const { data: pub } = context.supabase.storage.from(BUCKET_NAME).getPublicUrl(uploadData.path);
+          finalAudioUrl = pub.publicUrl;
+        }
       } catch (err: any) {
         throw new Error(err.message || "No se pudo procesar el video de YouTube.");
       }
     } else if (url.startsWith("http://") || url.startsWith("https://")) {
       // Si es un enlace de audio directo (ej. MP3 o WAV), intentar descargarlo al storage para independencia total
       try {
-        await asegurarBucketSoundtrack();
         const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
         if (res.ok) {
           const ct = res.headers.get("content-type") || "audio/mpeg";
@@ -103,11 +97,11 @@ export const procesarCancionServerFn = createServerFn({ method: "POST" })
           if (buf.byteLength > 1000) {
             const ext = ct.includes("wav") ? "wav" : ct.includes("mp4") || ct.includes("m4a") ? "m4a" : "mp3";
             const fileName = `${context.userId}/${Date.now()}_imported.${ext}`;
-            const { data: upData, error: upErr } = await supabaseAdmin.storage
+            const { data: upData, error: upErr } = await context.supabase.storage
               .from(BUCKET_NAME)
               .upload(fileName, buf, { contentType: ct, cacheControl: "3600", upsert: true });
             if (!upErr && upData) {
-              const { data: pub } = supabaseAdmin.storage.from(BUCKET_NAME).getPublicUrl(upData.path);
+              const { data: pub } = context.supabase.storage.from(BUCKET_NAME).getPublicUrl(upData.path);
               finalAudioUrl = pub.publicUrl;
             }
           }

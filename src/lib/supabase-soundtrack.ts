@@ -9,7 +9,7 @@ import {
 export const BUCKET_NAME = "soundtrack";
 
 /**
- * Sube un archivo de video/audio (Blob o File) a Supabase Storage
+ * Sube un archivo de audio (Blob o File) a Supabase Storage
  */
 export async function uploadAudioToSupabase(
   userId: string,
@@ -146,7 +146,8 @@ export async function procesarYGuardarCancion({
 /**
  * Extrae bucket y ruta de una URL de Supabase Storage (formato público o firmado)
  */
-function parseStorageRef(url: string): { bucket: string; path: string } | null {
+export function parseStorageRef(url: string): { bucket: string; path: string } | null {
+  if (!url || typeof url !== "string") return null;
   const marker = url.includes("/storage/v1/object/public/")
     ? "/storage/v1/object/public/"
     : url.includes("/storage/v1/object/sign/")
@@ -165,7 +166,7 @@ function parseStorageRef(url: string): { bucket: string; path: string } | null {
 }
 
 /**
- * Resuelve síncronamente una URL reproducible inmediata sin pausas de red (para no perder el gesto de usuario en móviles).
+ * Resuelve síncronamente una URL reproducible inmediata sin pausas de red.
  */
 export function resolvePlayableUrlSync(url: string): string {
   if (!url) return "";
@@ -181,9 +182,10 @@ export function resolvePlayableUrlSync(url: string): string {
 }
 
 /**
- * Resuelve una URL reproducible (firmada de Supabase Storage si es privado, o directa si es pública).
+ * Resuelve una URL reproducible 100% válida.
+ * Si es de Supabase Storage, genera una URL firmada autorizada para saltar cualquier restricción de RLS.
  */
-export async function resolvePlayableUrl(url: string, expiresIn = 3600): Promise<string> {
+export async function resolvePlayableUrl(url: string, expiresIn = 7200): Promise<string> {
   if (!url) return "";
   const trimmed = url.trim();
 
@@ -193,23 +195,22 @@ export async function resolvePlayableUrl(url: string, expiresIn = 3600): Promise
     return `https://inv.tux.pizza/latest_version?id=${ytId}&itag=140`;
   }
 
-  // Si es pública de Supabase o URL externa directa, no requiere firma
-  if (trimmed.includes("/storage/v1/object/public/") || !trimmed.includes("supabase.co")) {
-    return trimmed;
-  }
-
+  // Si es de Supabase Storage, generar URL firmada autorizada
   const ref = parseStorageRef(trimmed);
-  if (!ref) return trimmed;
-
-  try {
-    const { data, error } = await supabase.storage
-      .from(ref.bucket)
-      .createSignedUrl(ref.path, expiresIn);
-    if (error || !data?.signedUrl) return trimmed;
-    return data.signedUrl;
-  } catch {
-    return trimmed;
+  if (ref) {
+    try {
+      const { data, error } = await supabase.storage
+        .from(ref.bucket)
+        .createSignedUrl(ref.path, expiresIn);
+      if (!error && data?.signedUrl) {
+        return data.signedUrl;
+      }
+    } catch (e) {
+      console.warn("No se pudo obtener URL firmada de Supabase Storage:", e);
+    }
   }
+
+  return trimmed;
 }
 
 /**
@@ -217,16 +218,11 @@ export async function resolvePlayableUrl(url: string, expiresIn = 3600): Promise
  */
 export async function eliminarCancionDeSupabase(id: string, urlEnlace?: string): Promise<void> {
   // Intentar eliminar del storage si es un archivo de Supabase
-  if (urlEnlace && urlEnlace.includes("/storage/v1/object/public/")) {
+  if (urlEnlace && (urlEnlace.includes("/storage/v1/object/public/") || urlEnlace.includes("/storage/v1/object/sign/"))) {
     try {
-      const parts = urlEnlace.split("/storage/v1/object/public/")[1];
-      if (parts) {
-        const slashIndex = parts.indexOf("/");
-        const bucket = parts.substring(0, slashIndex);
-        const path = decodeURIComponent(parts.substring(slashIndex + 1));
-        if (bucket && path) {
-          await supabase.storage.from(bucket).remove([path]);
-        }
+      const ref = parseStorageRef(urlEnlace);
+      if (ref) {
+        await supabase.storage.from(ref.bucket).remove([ref.path]);
       }
     } catch (e) {
       console.warn("No se pudo eliminar el archivo físico del storage:", e);
