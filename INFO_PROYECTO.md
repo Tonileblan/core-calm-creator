@@ -3,7 +3,8 @@
 > **Ubicación Google Drive:** `Google Drive > Mi unidad > 1-Proyectos > Apps-Desarrollo > Flowmind`  
 > **Slug / Código:** `mia_flowmind`  
 > **Categoría:** Suite Toni (Propio / I+D)  
-> **Estado:** En Desarrollo  
+> **Estado:** En Producción (Vercel)  
+> **URL Producción:** [https://flowmindpro.vercel.app](https://flowmindpro.vercel.app)  
 > **Base de Datos:** Supabase PostgreSQL (`mia_flowmind`)  
 > **Directrices Maestras Drive:** [Carpeta de Directrices](https://drive.google.com/drive/folders/1lWPlfQ3KtLijHklYE0O993J-HwQInjZW)
 
