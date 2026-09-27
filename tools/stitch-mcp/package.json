@@ -1,0 +1,10 @@
+{
+  "name": "stitch-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for Google Stitch (stitch.withgoogle.com) AI UI design integration, prompt generation, canvas automation and code import",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1"
+  }
+}

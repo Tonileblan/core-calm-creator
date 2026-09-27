@@ -1,0 +1,10 @@
+{
+  "name": "macos-control-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for full macOS control and automation (Mouse, Keyboard, Screen, AppleScript, System)",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1"
+  }
+}
